@@ -71,7 +71,7 @@ def greedy(prompt: str, n_tokens: int = 3):
 
 
 def graph_json_for(slug: str) -> dict:
-    paths = sorted(glob.glob(os.path.join(S3_DATA, f"*{slug}*.json")))
+    paths = sorted(glob.glob(os.path.join(S3_DATA, "**", f"*{slug}*.json"), recursive=True))
     if not paths:
         raise FileNotFoundError(f"no graph JSON for slug {slug} under {S3_DATA}")
     return json.load(open(paths[-1]))
