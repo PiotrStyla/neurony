@@ -98,9 +98,10 @@ def explain(prompt: str, top_n: int = 5):
     picked = {}
     for w, src in drivers[:top_n]:
         n = nodes[src]
-        if n["feature_type"] == "logit":
-            continue
         layer, feat = src.split("_")[0], src.split("_")[1]
+        if not layer.isdigit():  # input-token embed nodes look like E_<tokenid>_<ctx>
+            print(f"  {w:+7.3f}  [input token id {feat}]")
+            continue
         picked[f"{layer}/{feat}"] = w
         detail = api(f"/api/feature/{MODEL_ID}/{layer}-res-v5/{feat}")
         acts = sorted(detail.get("activations", []), key=lambda a: -a.get("maxValue", 0))[:3]
