@@ -1,0 +1,14 @@
+# derived / downloaded — regenerate with convert_weights.py + make_sae_cache.py
+data/
+out/
+s3_data/
+hf_wrap/model.safetensors
+hf_wrap/tokenizer.json
+train_gpt_ref.py
+
+# local runtime state and secrets
+api_key.txt
+signin_*.txt
+session_token.txt
+__pycache__/
+*.pyc

@@ -1,0 +1,598 @@
+diff --git a/apps/webapp/.env.localhost b/apps/webapp/.env.localhost
+index e039aa3..e1cc509 100644
+--- a/apps/webapp/.env.localhost
++++ b/apps/webapp/.env.localhost
+@@ -47,6 +47,9 @@ NEXT_PUBLIC_DEFAULT_RELEASE_NAME=gemma-scope
+ DEFAULT_CREATOR_USER_ID=clkht01d40000jv08hvalcvly
+ PUBLIC_ACTIVATIONS_USER_IDS=clsxqq2xd0000vvp2k5itlhqj,clkht01d40000jv08hvalcvly,cljqfoqm1000776wmbr1f5mux,cljj57d3c000076ei38vwnv35
+ INFERENCE_ACTIVATION_USER_ID=cljgamm90000076zdchicy6zj
++S3_ENDPOINT=http://127.0.0.1:9000
++AWS_ACCESS_KEY_ID=localminio
++AWS_SECRET_ACCESS_KEY=localminio
+ 
+ # Defaults for Steering
+ NEXT_PUBLIC_DEFAULT_STEER_MODEL=gemma-2-2b-it
+diff --git a/apps/webapp/app/[modelId]/graph/link-graph.tsx b/apps/webapp/app/[modelId]/graph/link-graph.tsx
+index f23052d..bad19d3 100644
+--- a/apps/webapp/app/[modelId]/graph/link-graph.tsx
++++ b/apps/webapp/app/[modelId]/graph/link-graph.tsx
+@@ -50,18 +50,31 @@ function clerpUUID(d: CLTGraphNode) {
+   return `🤖${d.featureIndex}`;
+ }
+ 
+-function saveHClerpsToLocalStorage(hClerps: Map<string, any>) {
++// localStorage can be blocked entirely (browser cookie settings), so keep an in-memory
++// fallback — same treatment as the other storage call sites on this page.
++const memoryClerps = new Map<string, unknown>();
++
++function saveHClerpsToLocalStorage(hClerps: Map<string, unknown>) {
+   const key = 'local-clerp';
+   const hClerpArray = Array.from(hClerps.entries()).filter((d) => d[1]);
+-  localStorage.setItem(key, JSON.stringify(hClerpArray));
++  try {
++    localStorage.setItem(key, JSON.stringify(hClerpArray));
++  } catch {
++    memoryClerps.clear();
++    hClerpArray.forEach((d) => memoryClerps.set(d[0], d[1]));
++  }
+ }
+ 
+ function getHClerpsFromLocalStorage() {
+   const key = 'local-clerp';
+-  // We want to set on load here so that any page load will fix the key.
+-  if (localStorage.getItem(key) === null) localStorage.setItem(key, '[]');
+-  const hClerpArray = JSON.parse(localStorage.getItem(key) || '[]').filter((d: any) => d[0] !== clerpUUID(d));
+-  return new Map(hClerpArray);
++  try {
++    // We want to set on load here so that any page load will fix the key.
++    if (localStorage.getItem(key) === null) localStorage.setItem(key, '[]');
++    const hClerpArray = JSON.parse(localStorage.getItem(key) || '[]').filter((d) => d[0] !== clerpUUID(d));
++    return new Map(hClerpArray);
++  } catch {
++    return new Map(memoryClerps);
++  }
+ }
+ 
+ function hClerpUpdateFn(params: [any, any] | null, data: CLTGraphExtended) {
+diff --git a/apps/webapp/app/api/graph/delete/route.ts b/apps/webapp/app/api/graph/delete/route.ts
+index 6614379..df346ca 100644
+--- a/apps/webapp/app/api/graph/delete/route.ts
++++ b/apps/webapp/app/api/graph/delete/route.ts
+@@ -9,7 +9,10 @@ const deleteGraphSchema = object({
+   slug: string().required(),
+ });
+ 
+-const s3Client = new S3Client({ region: 'us-east-1' });
++const s3Client = new S3Client({
++  region: 'us-east-1',
++  ...(process.env.S3_ENDPOINT ? { endpoint: process.env.S3_ENDPOINT, forcePathStyle: true } : {}),
++});
+ 
+ /**
+  * @swagger
+diff --git a/apps/webapp/app/api/graph/generate/route.ts b/apps/webapp/app/api/graph/generate/route.ts
+index e0ba2a3..3997791 100644
+--- a/apps/webapp/app/api/graph/generate/route.ts
++++ b/apps/webapp/app/api/graph/generate/route.ts
+@@ -281,6 +281,7 @@ export const POST = withOptionalUser(async (request: RequestOptionalUser) => {
+         accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+       },
++      ...(process.env.S3_ENDPOINT ? { endpoint: process.env.S3_ENDPOINT, forcePathStyle: true } : {}),
+     });
+ 
+     // Create the command for putting an object
+diff --git a/apps/webapp/app/api/graph/signed-put/route.ts b/apps/webapp/app/api/graph/signed-put/route.ts
+index c47459c..1ab354b 100644
+--- a/apps/webapp/app/api/graph/signed-put/route.ts
++++ b/apps/webapp/app/api/graph/signed-put/route.ts
+@@ -114,6 +114,7 @@ export const POST = withAuthedUser(async (request: RequestAuthedUser) => {
+         accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+       },
++      ...(process.env.S3_ENDPOINT ? { endpoint: process.env.S3_ENDPOINT, forcePathStyle: true } : {}),
+     });
+ 
+     // Create the command for putting an object
+diff --git a/apps/webapp/app/api/graph/tokenize/route.ts b/apps/webapp/app/api/graph/tokenize/route.ts
+index 955c5bc..d9f54f1 100644
+--- a/apps/webapp/app/api/graph/tokenize/route.ts
++++ b/apps/webapp/app/api/graph/tokenize/route.ts
+@@ -73,7 +73,7 @@ const tokenizeRequestSchema = yup.object({
+  *             properties:
+  *               modelId:
+  *                 type: string
+- *                 enum: [gemma-2-2b, gemma-3-4b-it, qwen3-4b, qwen3-1.7b]
++ *                 enum: [gemma-2-2b, gemma-3-4b-it, qwen3-4b, qwen3-1.7b, gollem-v5-128m-muon-v1]
+  *                 description: The model id to tokenize with.
+  *                 example: gemma-2-2b
+  *               sourceSetName:
+diff --git a/apps/webapp/app/api/lens/share/route.ts b/apps/webapp/app/api/lens/share/route.ts
+index 80fb2d3..75b7cdd 100644
+--- a/apps/webapp/app/api/lens/share/route.ts
++++ b/apps/webapp/app/api/lens/share/route.ts
+@@ -625,6 +625,7 @@ export const POST = withOptionalUser(async (request: RequestOptionalUser) => {
+         accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+       },
++      ...(process.env.S3_ENDPOINT ? { endpoint: process.env.S3_ENDPOINT, forcePathStyle: true } : {}),
+     });
+     await s3Client.send(
+       new PutObjectCommand({
+diff --git a/apps/webapp/lib/utils/graph.ts b/apps/webapp/lib/utils/graph.ts
+index 8e934b5..7ae16b7 100644
+--- a/apps/webapp/lib/utils/graph.ts
++++ b/apps/webapp/lib/utils/graph.ts
+@@ -32,7 +32,13 @@ export const GRAPH_BATCH_SIZE = 48;
+ export const getEstimatedTimeFromNumTokens = (numTokens: number, slower: boolean = false, isLorsa: boolean = false) =>
+   11.2 * Math.log2(Math.max(numTokens, 4)) - 7 + (slower ? 20 : 0) + (isLorsa ? 20 : 0);
+ export const GRAPH_MAX_TOKENS = 64;
+-export const GRAPH_GENERATION_ENABLED_MODELS = ['gemma-2-2b', 'gemma-3-4b-it', 'qwen3-4b', 'qwen3-1.7b'];
++export const GRAPH_GENERATION_ENABLED_MODELS = [
++  'gemma-2-2b',
++  'gemma-3-4b-it',
++  'qwen3-4b',
++  'qwen3-1.7b',
++  'gollem-v5-128m-muon-v1',
++];
+ 
+ export const LORSA_MODELS = ['qwen3-1.7b'];
+ export const LORSA_BATCH_SIZE = 16;
+@@ -42,6 +48,9 @@ export const GRAPH_MODEL_MAP = {
+   'gemma-3-4b-it': 'google/gemma-3-4b-it',
+   'qwen3-4b': 'Qwen/Qwen3-4B',
+   'qwen3-1.7b': 'Qwen/Qwen3-1.7B',
++  // GoLLeM-v5 is supplied locally (HF wrapper in gollem-np/hf_wrap), not loaded from the Hub;
++  // this matches the value in np_model_to_hf.json, which the graph server labels scans with.
++  'gollem-v5-128m-muon-v1': process.env.GOLLEM_HF_MODEL_PATH ?? 'C:/Users/Hipek/gollem-np/hf_wrap',
+ };
+ 
+ export const GRAPH_S3_USER_GRAPHS_DIR = 'user-graphs';
+diff --git a/apps/webapp/package-lock.json b/apps/webapp/package-lock.json
+index 0fcbb5a..99c7585 100644
+--- a/apps/webapp/package-lock.json
++++ b/apps/webapp/package-lock.json
+@@ -2031,9 +2031,6 @@
+       "cpu": [
+         "arm"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -2050,9 +2047,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -2069,9 +2063,6 @@
+       "cpu": [
+         "ppc64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -2088,9 +2079,6 @@
+       "cpu": [
+         "riscv64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -2107,9 +2095,6 @@
+       "cpu": [
+         "s390x"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -2126,9 +2111,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -2145,9 +2127,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -2164,9 +2143,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "LGPL-3.0-or-later",
+       "optional": true,
+       "os": [
+@@ -2183,9 +2159,6 @@
+       "cpu": [
+         "arm"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -2208,9 +2181,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -2233,9 +2203,6 @@
+       "cpu": [
+         "ppc64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -2258,9 +2225,6 @@
+       "cpu": [
+         "riscv64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -2283,9 +2247,6 @@
+       "cpu": [
+         "s390x"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -2308,9 +2269,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -2333,9 +2291,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -2358,9 +2313,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "Apache-2.0",
+       "optional": true,
+       "os": [
+@@ -2906,9 +2858,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2925,9 +2874,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2944,9 +2890,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -2963,9 +2906,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -5201,9 +5141,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -5221,9 +5158,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -5241,9 +5175,6 @@
+         "ppc64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -5261,9 +5192,6 @@
+         "s390x"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -5281,9 +5209,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -5301,9 +5226,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -5516,9 +5438,6 @@
+       "cpu": [
+         "arm"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -5532,9 +5451,6 @@
+       "cpu": [
+         "arm"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -5548,9 +5464,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -5564,9 +5477,6 @@
+       "cpu": [
+         "arm64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -5580,9 +5490,6 @@
+       "cpu": [
+         "loong64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -5596,9 +5503,6 @@
+       "cpu": [
+         "loong64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -5612,9 +5516,6 @@
+       "cpu": [
+         "ppc64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -5628,9 +5529,6 @@
+       "cpu": [
+         "ppc64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -5644,9 +5542,6 @@
+       "cpu": [
+         "riscv64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -5660,9 +5555,6 @@
+       "cpu": [
+         "riscv64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -5676,9 +5568,6 @@
+       "cpu": [
+         "s390x"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -5692,9 +5581,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -5708,9 +5594,6 @@
+       "cpu": [
+         "x64"
+       ],
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MIT",
+       "optional": true,
+       "os": [
+@@ -15545,9 +15428,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -15569,9 +15449,6 @@
+         "arm64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -15593,9 +15470,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "glibc"
+-      ],
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -15617,9 +15491,6 @@
+         "x64"
+       ],
+       "dev": true,
+-      "libc": [
+-        "musl"
+-      ],
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+diff --git a/np_model_to_hf.json b/np_model_to_hf.json
+index 2c0ae2b..bc72c34 100644
+--- a/np_model_to_hf.json
++++ b/np_model_to_hf.json
+@@ -39,5 +39,6 @@
+   "olmo-3-1125-32b": "allenai/Olmo-3-1125-32B",
+   "qwen3-32b": "Qwen/Qwen3-32B",
+   "llama3.3-70b-it": "meta-llama/Llama-3.3-70B-Instruct",
+-  "deepseek-v4-flash": "deepseek-ai/DeepSeek-V4-Flash"
+-}
++  "deepseek-v4-flash": "deepseek-ai/DeepSeek-V4-Flash",
++  "gollem-v5-128m-muon-v1": "C:/Users/Hipek/gollem-np/hf_wrap"
++}
+\ No newline at end of file
