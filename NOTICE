@@ -1,0 +1,65 @@
+neurony — GoLLeM-v5 on Neuronpedia (HF wrapper, SAE/circuit-tracer conversion, graph stack)
+Copyright (c) 2026 PiotrStyla
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product contains or is derived from the following works:
+
+----------------------------------------------------------------------
+Neuronpedia — https://github.com/hijohnnylin/neuronpedia
+Copyright (c) Johnny Lin and contributors
+Licensed under the Apache License, Version 2.0.
+Used as: the platform this stack runs on. gollem-port.patch is a set of
+modifications to its source.
+
+----------------------------------------------------------------------
+circuit-tracer — https://github.com/safety-research/circuit-tracer
+(and the interp-engine-capable fork https://github.com/decoderesearch/circuit-tracer)
+Copyright (c) 2024 Michael Hanna and Mateusz Piotrowski
+Licensed under the MIT License.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Used as: attribution-graph engine and transcoder data format; make_sae_cache.py
+produces files in its SingleLayerTranscoder/TranscoderSet layout and imports it
+for the conversion self-test.
+
+----------------------------------------------------------------------
+interp-engine — https://github.com/decoderesearch/interp-engine
+Licensed under the Apache License, Version 2.0.
+Used as: the model-execution engine that hooks the HF model in place.
+
+----------------------------------------------------------------------
+GoLLeM-v5 checkpoints and train_gpt_ref.py —
+https://huggingface.co/SlayerLab/gollem-v5-ckpts
+Copyright (c) SlayerLab / Fabryka AI (train_gpt_ref.py author: Hart (N-02))
+Licensed under the Apache License, Version 2.0 (declared on the repository card).
+
+Used as: the reference implementation whose semantics hf_wrap/modeling_gollem_v5.py
+reimplements 1:1 (parity-checked to ~3e-5 logits by convert_weights.py). The file
+itself is not vendored; convert_weights.py fetches it from the pinned revision on
+demand, and it remains under its own license.
+
+----------------------------------------------------------------------
+Model weights: Maggio33/GoLLeM-v5-128M-Muon-v1 (no single license;
+see "gollem-v5-see-training-data" on its model card).
+SAE weights: PiotrSty/gollem-v5-128m-sae-res-v5 (derived artifacts of the
+base model and WikiText (CC BY-SA 4.0 / GFDL); see its model card).
+
+Weights are not part of this repository and are fetched from Hugging Face.

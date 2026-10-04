@@ -1,6 +1,7 @@
 """GoLLeM-v5 as a HuggingFace model.
 
-Semantics are exactly ``train_gpt_ref.py`` (SlayerLab/gollem-v5-ckpts):
+Semantics are exactly ``train_gpt_ref.py`` (SlayerLab/gollem-v5-ckpts, Apache-2.0;
+reimplemented here, not vendored — see NOTICE):
 pre-RMSNorm blocks, fused ``qkv`` (bias) -> per-head QK-RMSNorm -> interleaved
 RoPE -> value residual ``v += lambda_layer0 * v0`` (ResFormer) -> causal
 attention -> ``o_proj`` (bias), SwiGLU MLP (no bias), tied embeddings, final
