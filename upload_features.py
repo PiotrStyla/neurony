@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Build upload-batch payloads from mine_activations.py output and POST them
-to the local Neuronpedia webapp (/api/feature/upload-batch).
+"""Upload mined features/activations to the Neuronpedia webapp (/api/feature/upload-batch).
 
-Activation values are post-TopK: the mined max value at the peak token, 0.0 at
-other context tokens (that is the SAE output there). Token strings are the
-model's own BPE pieces (tokenizer.json id_to_token).
+Works for any model/source set, e.g.:
+  python upload_features.py --model-id gollem-v5-128m-muon-v1 --set-name res-v5 \
+      --layers 16 --d-sae 6144 --out out
+  python upload_features.py --model-id gollem-v6-250m --set-name res-v6 \
+      --layers 20 --d-sae 7680 --out out_v6
 """
 import argparse
 import json
@@ -15,91 +16,87 @@ import urllib.request
 import numpy as np
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-OUT_DIR = os.path.join(ROOT, "out")
-
-MODEL_ID = "gollem-v5-128m-muon-v1"
-N_LAYER, D_SAE, N_TOP, CTX = 16, 6144, 20, 8
 BATCH_FEATURES = 128
 
 
-def load_tokenizer():
-    from tokenizers import Tokenizer
-    return Tokenizer.from_file(os.path.join(ROOT, "data", "model", "tokenizer.json"))
+def parse_args():
+    p = argparse.ArgumentParser(description="wgrowanie featurow/aktywacji do Neuronpedia")
+    p.add_argument("--model-id", default="gollem-v5-128m-muon-v1")
+    p.add_argument("--set-name", default="res-v5")
+    p.add_argument("--layers", type=int, default=16)
+    p.add_argument("--d-sae", type=int, default=6144)
+    p.add_argument("--n-top", type=int, default=20)
+    p.add_argument("--ctx", type=int, default=8)
+    p.add_argument("--out", default=os.path.join(ROOT, "out"))
+    p.add_argument("--url", default="http://127.0.0.1:3000/api/feature/upload-batch")
+    p.add_argument("--api-key-file", default=os.path.join(ROOT, "api_key.txt"))
+    p.add_argument("--layer-list", default="all", help='"all" albo np. "0,1,2"')
+    return p.parse_args()
 
 
-def build_layer_features(layer, windows, id_to_token):
-    z = np.load(os.path.join(OUT_DIR, f"layer{layer}.npz"))
+def build_layer_features(a, layer, windows, id_to_token):
+    z = np.load(os.path.join(a.out, f"layer{layer}.npz"))
     top_vals, top_locs, density = z["top_vals"], z["top_locs"], z["density"]
     seq = windows.shape[1]
     features = []
-    for feat in range(D_SAE):
+    for feat in range(a.d_sae):
         activations = []
         for v, loc in zip(top_vals[feat], top_locs[feat]):
             if loc < 0 or not np.isfinite(v):
                 continue
-            win = int(loc) // seq
-            pos = int(loc) % seq
-            lo, hi = max(0, pos - CTX), min(seq, pos + CTX + 1)
-            ids = windows[win, lo:hi]
-            tokens = [id_to_token(int(i)) for i in ids]
+            win, pos = int(loc) // seq, int(loc) % seq
+            lo, hi = max(0, pos - a.ctx), min(seq, pos + a.ctx + 1)
+            tokens = [id_to_token(int(i)) for i in windows[win, lo:hi]]
             values = [0.0] * (hi - lo)
             values[pos - lo] = float(v)
             activations.append({"tokens": tokens, "values": values})
-        activations.sort(key=lambda a: -max(a["values"]))
+        activations.sort(key=lambda ac: -max(ac["values"]))
         if not activations:
-            # dead feature in the 524k-token sample: register it with an honest marker
-            activations = [{"tokens": ["<no activation in 524k-token sample>"], "values": [0.0]}]
-        features.append({
-            "index": feat,
-            "density": float(density[feat]),
-            "activations": activations,
-        })
+            # martwy featr w probce: uczciwy znacznik zamiast pustych tokenow
+            activations = [{"tokens": ["<no activation in sample>"], "values": [0.0]}]
+        features.append({"index": feat, "density": float(density[feat]), "activations": activations})
     return features
 
 
-def post_batches(url, api_key, layer, features, retries=4):
-    src = f"{layer}-res-v5"
+def post_batches(a, api_key, layer, features):
+    src = f"{layer}-{a.set_name}"
     ok = 0
     for start in range(0, len(features), BATCH_FEATURES):
-        chunk = features[start : start + BATCH_FEATURES]
-        body = json.dumps({"modelId": MODEL_ID, "source": src, "features": chunk}).encode()
-        req = urllib.request.Request(url, data=body, method="POST", headers={
+        chunk = features[start: start + BATCH_FEATURES]
+        body = json.dumps({"modelId": a.model_id, "source": src, "features": chunk}).encode()
+        req = urllib.request.Request(a.url, data=body, method="POST", headers={
             "Content-Type": "application/json", "x-api-key": api_key})
-        for attempt in range(retries):
+        for attempt in range(4):
             try:
                 with urllib.request.urlopen(req, timeout=300) as r:
-                    resp = json.loads(r.read())
+                    r.read()
                 ok += 1
                 break
             except Exception as e:
-                if attempt == retries - 1:
+                if attempt == 3:
                     raise
-                print(f"  retry {attempt+1} after: {e}", flush=True)
+                print(f"  retry {attempt + 1} po: {e}", flush=True)
                 time.sleep(2 * (attempt + 1))
-        if ok % 8 == 0:
-            print(f"  layer {layer}: {ok}/48 batches", flush=True)
     return ok
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--url", default="http://127.0.0.1:3000/api/feature/upload-batch")
-    ap.add_argument("--api-key-file", default=os.path.join(ROOT, "api_key.txt"))
-    ap.add_argument("--layers", default="all")
-    args = ap.parse_args()
+    a = parse_args()
+    api_key = open(a.api_key_file).read().strip().split("=")[-1]
+    layers = (range(a.layers) if a.layer_list == "all"
+              else [int(x) for x in a.layer_list.split(",")])
 
-    api_key = open(args.api_key_file).read().strip().split("=")[-1]
-    layers = range(N_LAYER) if args.layers == "all" else [int(x) for x in args.layers.split(",")]
-
-    tok = load_tokenizer()
-    id_to_token = lambda i: tok.id_to_token(i)
-    windows = np.load(os.path.join(OUT_DIR, "windows.npy"))
+    from tokenizers import Tokenizer
+    tok = Tokenizer.from_file(os.path.join(ROOT, "data", "model", "tokenizer.json")
+                              if a.set_name == "res-v5"
+                              else os.path.join(ROOT, "data", "model_v6", "tokenizer.json"))
+    windows = np.load(os.path.join(a.out, "windows.npy"))
 
     t0 = time.time()
     for layer in layers:
-        features = build_layer_features(layer, windows, id_to_token)
-        n = post_batches(args.url, api_key, layer, features)
-        print(f"layer {layer}: {n} batches posted ({time.time()-t0:.0f}s total)", flush=True)
+        features = build_layer_features(a, layer, windows, tok.id_to_token)
+        n = post_batches(a, api_key, layer, features)
+        print(f"layer {layer}: {n} batchy ({time.time() - t0:.0f}s total)", flush=True)
     print("UPLOAD DONE")
 
 

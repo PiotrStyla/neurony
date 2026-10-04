@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
-"""Launch the Neuronpedia graph server (apps/graph) for GoLLeM-v5 + res-v5 TopK SAEs.
+"""Launch the Neuronpedia graph server (apps/graph) for a local GoLLeM model + TopK SAE set.
+
+Everything model-specific comes from the environment (defaults = v5 + res-v5), so one
+code path serves several instances (e.g. np-graph on :5004 for v5, np-graph-v6 on :5005):
+
+  MODEL_PATH            katalog HF wrappera / modelu (tez etykieta w np_model_to_hf.json)
+  TRANSCODER_SET        nazwa zestawu SAE (np. local/gollem-res-v5)
+  TRANSCODER_CACHE_DIR  katalog cache circuit-tracera dla zestawu
+  N_LAYERS              liczba warstw / plikow layer_*.safetensors
+  SOURCE_URLS           URL-e zrodel do metadanych grafu (przecinek)
+  SECRET, DEVICE, MODEL_DTYPE, TOKEN_LIMIT, SERVER_HOST, SERVER_PORT — jak w apps/graph/start.py
 
 Runs uvicorn in this process (unlike apps/graph/start.py, which spawns a child) so the
 transcoder-loader shim below is installed in the server's own interpreter.
 
 Shim: circuit-tracer's ``load_transcoders_from_cache`` does not forward the ``activation``/
 ``k`` fields from config.yaml to ``load_transcoder_set``, so a TopK set loaded through the
-cache silently degrades to ReLU. Here the local set is built through ``load_transcoders(config)``,
-which does pass them (and resolves the layer files from explicit local paths). Falls through to
-the stock hub loader for every other ref.
-
-Model: the HF wrapper in ../gollem-np/hf_wrap (GollemV5ForCausalLM, auto_map/trust_remote_code),
-parity-checked against train_gpt_ref.GPT to 3e-5 logits.
+cache silently degrades to ReLU. Here the set is built through ``load_transcoders(config)``,
+which does pass them. Falls through to the stock hub loader for every other ref.
 """
 import os
 import sys
@@ -19,9 +25,16 @@ import sys
 GOLLEM_NP = os.path.dirname(os.path.abspath(__file__))
 APPS_GRAPH = os.environ.get("APPS_GRAPH", os.path.join(os.path.dirname(GOLLEM_NP), "neuronpedia", "apps", "graph"))
 sys.path.insert(0, APPS_GRAPH)  # neuronpedia_graph package lives in apps/graph (start.py runs from there)
-CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "circuit_tracer", "local", "gollem-res-v5")
-LOCAL_REF = "local/gollem-res-v5"
-MODEL_PATH = os.path.join(GOLLEM_NP, "hf_wrap").replace("\\", "/")  # must match np_model_to_hf.json exactly
+
+MODEL_PATH = os.environ.get("GOLLEM_HF_MODEL_PATH", os.path.join(GOLLEM_NP, "hf_wrap")).replace("\\", "/")
+LOCAL_REF = os.environ.get("TRANSCODER_SET", "local/gollem-res-v5")
+CACHE_DIR = os.environ.get("TRANSCODER_CACHE_DIR",
+                           os.path.join(os.path.expanduser("~"), ".cache", "circuit_tracer", "local", "gollem-res-v5"))
+N_LAYERS = int(os.environ.get("N_LAYERS", "16"))
+SOURCE_URLS = os.environ.get("SOURCE_URLS", "").split(",") if os.environ.get("SOURCE_URLS") else [
+    "http://localhost:3000/gollem-v5-128m-muon-v1/res-v5",
+    "https://huggingface.co/PiotrSty/gollem-v5-128m-sae-res-v5",
+]
 
 os.environ.setdefault("ATTRIBUTION_ENGINE", "circuit-tracer")
 os.environ.setdefault("MODEL_ENGINE", "interp_engine")
@@ -35,8 +48,6 @@ os.environ.setdefault("MAX_FEATURE_NODES", "10000")
 os.environ.setdefault("UPDATE_INTERVAL", "1000")
 os.environ.setdefault("SERVER_HOST", "127.0.0.1")
 os.environ.setdefault("SERVER_PORT", "5004")
-
-N_LAYERS = 16
 
 
 def install_shim() -> None:
@@ -72,10 +83,7 @@ def main() -> None:
     import neuronpedia_graph.server as graph_server
 
     # graph metadata "source_urls": the stock table only knows hub transcoder sets
-    graph_server.TRANSCODER_SET_TO_SOURCE_URL_ARRAYS[LOCAL_REF] = [
-        "http://localhost:3000/gollem-v5-128m-muon-v1/res-v5",
-        "https://huggingface.co/PiotrSty/gollem-v5-128m-sae-res-v5",
-    ]
+    graph_server.TRANSCODER_SET_TO_SOURCE_URL_ARRAYS[LOCAL_REF] = SOURCE_URLS
     import uvicorn
 
     uvicorn.run(

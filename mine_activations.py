@@ -1,20 +1,27 @@
 #!/usr/bin/env python3
-"""Mine top-activating examples for PiotrSty/gollem-v5-128m-sae-res-v5.
+"""Mine top-activating examples for a GoLLeM TopK SAE set (res_post_block).
 
-Forward pass follows train_gpt_ref.py (SlayerLab/gollem-v5-ckpts) exactly:
-res_post_block after each of 16 blocks -> TopK SAE (k=50) -> per-feature top-20
-max-activating windows + density. Values are post-TopK (0 outside a token's
-top-50), which is the SAE's actual output.
+Forward follows the official model semantics (train_gpt_ref.py for v5,
+modeling_gollem_v6.py for v6): post-block residuals -> TopK SAE -> per-feature
+top-N max-activating windows + density. Values are post-TopK (0 outside a
+token's top-k), which is the SAE's actual output.
 
-Modes:
-  --validate   byte-normalized perplexity on WikiText-2 test (model card: 2.2717)
-  --smoke      4 batches, timing + sanity, no output files
-  (default)    full mining run -> out/layer{L}.npz + out/windows.npy
+Examples:
+  # GoLLeM-v5 + res-v5 (defaults)
+  python mine_activations.py
+  # GoLLeM-v6 + res_v6 (20 warstw, PL/EN)
+  python mine_activations.py --arch gollem_v6 --model-dir data/model_v6 \
+      --sae-dir data/sae_v6 --file-template "res_v6_layer{layer}_final.safetensors" \
+      --layers 20 --d-model 960 --n-head 15 --vocab 32768 --d-sae 7680 \
+      --mix-pl 0.5 --out out_v6
+
+Modes: --mode smoke (4 batche, bez zapisu) | mine (pelny przebieg -> out/)
 """
 import argparse
 import importlib.util
 import json
 import os
+import sys
 import time
 from types import SimpleNamespace
 
@@ -22,219 +29,232 @@ import numpy as np
 import torch
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-MODEL_DIR = os.path.join(ROOT, "data", "model")
-SAE_DIR = os.path.join(ROOT, "data", "sae")
-OUT_DIR = os.path.join(ROOT, "out")
-
-SEQ = 512          # SAE training seq len; mining windows match
-CTX = 8            # context tokens each side of the max-activating token
-TOPK = 50          # SAE k
-N_TOP = 20         # examples kept per feature
-VOCAB, N_LAYER, N_HEAD, D_EMBD, D_SAE = 12288, 16, 12, 768, 6144
 
 
-def load_gpt():
-    spec = importlib.util.spec_from_file_location("tgr", os.path.join(ROOT, "train_gpt_ref.py"))
-    tgr = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(tgr)
-    cfg = SimpleNamespace(pos="rope", norm="rmsnorm", norm_eps=1e-6, ffn="swiglu",
-                          ffn_mult=2.667, value_residual=True, qk_norm=True,
-                          rope_theta=100000.0)
-    model = tgr.GPT(VOCAB, N_LAYER, D_EMBD, N_HEAD, 1024, cfg)
-    from safetensors.torch import load_file
-    model.load_state_dict(load_file(os.path.join(MODEL_DIR, "model.safetensors")))
-    model.eval()
-    return tgr, model
+def parse_args():
+    p = argparse.ArgumentParser(description="top-activating examples dla zestawu TopK SAE")
+    p.add_argument("--arch", choices=["gollem_v5", "gollem_v6"], default="gollem_v5")
+    p.add_argument("--model-dir", default=os.path.join(ROOT, "data", "model"))
+    p.add_argument("--sae-dir", default=os.path.join(ROOT, "data", "sae"))
+    p.add_argument("--file-template", default="res_v5_layer{layer}_final.safetensors")
+    p.add_argument("--out", default=os.path.join(ROOT, "out"))
+    p.add_argument("--layers", type=int, default=16)
+    p.add_argument("--d-model", type=int, default=768)
+    p.add_argument("--n-head", type=int, default=12)
+    p.add_argument("--vocab", type=int, default=12288)
+    p.add_argument("--d-sae", type=int, default=6144)
+    p.add_argument("--k", type=int, default=50)
+    p.add_argument("--n-top", type=int, default=20)
+    p.add_argument("--seq", type=int, default=512)
+    p.add_argument("--ctx", type=int, default=8)
+    p.add_argument("--windows", type=int, default=1024)
+    p.add_argument("--batch", type=int, default=8)
+    p.add_argument("--mix-pl", type=float, default=0.0,
+                   help="udzial Wikipedii PL w korpusie (v6 jest dwujezyczny: 0.5)")
+    p.add_argument("--mode", choices=["mine", "smoke"], default="mine")
+    return p.parse_args()
+
+
+A = parse_args()
+
+
+def load_model():
+    """Zwraca (model, tokenizer) — model ma .tok, .blocks i forward(idx) -> logits."""
+    from tokenizers import Tokenizer
+
+    tok = Tokenizer.from_file(os.path.join(A.model_dir, "tokenizer.json"))
+    if A.arch == "gollem_v6":
+        sys.path.insert(0, A.model_dir)
+        from modeling_gollem_v6 import load_gollem_v6
+
+        model, _ = load_gollem_v6(A.model_dir, device="cpu")
+    else:
+        from safetensors.torch import load_file
+
+        spec = importlib.util.spec_from_file_location("tgr", os.path.join(ROOT, "train_gpt_ref.py"))
+        tgr = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tgr)
+        cfg = SimpleNamespace(pos="rope", norm="rmsnorm", norm_eps=1e-6, ffn="swiglu",
+                              ffn_mult=2.667, value_residual=True, qk_norm=True,
+                              rope_theta=100000.0)
+        model = tgr.GPT(A.vocab, A.layers, A.d_model, A.n_head, 1024, cfg)
+        model.load_state_dict(load_file(os.path.join(A.model_dir, "model.safetensors")))
+        model.eval()
+    return model, tok
 
 
 def load_saes():
     from safetensors.torch import load_file
+
     saes = []
-    for l in range(N_LAYER):
-        sd = load_file(os.path.join(SAE_DIR, f"res_v5_layer{l}_final.safetensors"))
-        saes.append({k: v.float() for k, v in sd.items()})
+    for l in range(A.layers):
+        path = os.path.join(A.sae_dir, A.file_template.format(layer=l))
+        saes.append({k: v.float() for k, v in load_file(path).items()})
     return saes
 
 
 def forward_resid(model, idx):
-    """Returns list of post-block residuals [B, T, 768], one per block."""
+    """Lista residuow po blokach [B, T, d_model] (res_post_block)."""
     x = model.tok(idx)
-    v0 = None
-    res = []
+    v0, out = None, []
     for b in model.blocks:
         x, v0 = b(x, v0)
-        res.append(x)
-    return res
+        out.append(x)
+    return out
 
 
-def sae_topk(sae, x_flat):
-    pre = torch.relu((x_flat - sae["b_dec"]) @ sae["W_enc"] + sae["b_enc"])
-    return pre.topk(TOPK, dim=-1)
-
-
-def merge_top(vals, locs, f, v, p):
-    """Merge new hits (f, v, p) into per-feature top-N_TOP tables (numpy)."""
+def merge_top(vals, locs, f, v, p, n_top):
+    """Merge new hits (f, v, p) into per-feature top-N tables (numpy)."""
     F = vals.shape[0]
-    cf = np.concatenate([np.repeat(np.arange(F, dtype=np.int64), N_TOP), f])
+    cf = np.concatenate([np.repeat(np.arange(F, dtype=np.int64), n_top), f])
     cv = np.concatenate([vals.ravel(), v])
     cp = np.concatenate([locs.ravel(), p])
     order = np.lexsort((-cv, cf))
     cf, cv, cp = cf[order], cv[order], cp[order]
     uniq, start, counts = np.unique(cf, return_index=True, return_counts=True)
     rank = np.arange(len(cf)) - np.repeat(start, counts)
-    sel = rank < N_TOP
-    # every feature has >= N_TOP entries (old table pads with -inf) -> exactly F*N_TOP
-    vals[:] = cv[sel].reshape(F, N_TOP)
-    locs[:] = cp[sel].reshape(F, N_TOP)
+    sel = rank < n_top
+    vals[:] = cv[sel].reshape(F, n_top)
+    locs[:] = cp[sel].reshape(F, n_top)
 
 
-def corpus_windows(n_windows, tok, seq=SEQ):
+def corpus_windows(n_windows, tok, seq):
     from datasets import load_dataset
-    ids = []
-    total = 0
-    for split_name in ("wikitext-103-raw-v1", "wikitext-2-raw-v1"):
-        ds = load_dataset("Salesforce/wikitext", split_name, split="train")
-        for row in ds:
-            text = row["text"]
-            if not text.strip():
-                continue
-            ids.extend(tok.encode(text).ids)
-            total += 1
-            if len(ids) >= (n_windows + 1) * seq:
+
+    def collect(docs, budget):
+        ids = []
+        for add in docs():
+            ids.extend(add)
+            if len(ids) >= budget:
                 break
-        if len(ids) >= (n_windows + 1) * seq:
-            break
-    ids = np.asarray(ids[: n_windows * seq], dtype=np.int32)
-    return ids.reshape(n_windows, seq)
+        return ids[:budget]
+
+    def en_docs():
+        for name in ("wikitext-103-raw-v1", "wikitext-2-raw-v1"):
+            for row in load_dataset("Salesforce/wikitext", name, split="train", streaming=True):
+                t = row["text"]
+                if t.strip():
+                    yield tok.encode(t).ids
+
+    def pl_docs():
+        for row in load_dataset("wikimedia/wikipedia", "20231101.pl", split="train", streaming=True):
+            t = row.get("text", "")
+            if len(t) > 200:
+                yield tok.encode(t[:20000]).ids
+
+    target = n_windows * seq
+    n_pl = int(target * A.mix_pl)
+    parts = []
+    ids = collect(en_docs, target - n_pl)
+    if ids:
+        parts.append(np.asarray(ids[: (len(ids) // seq) * seq], dtype=np.int64).reshape(-1, seq))
+    if n_pl:
+        ids = collect(pl_docs, n_pl)
+        if ids:
+            parts.append(np.asarray(ids[: (len(ids) // seq) * seq], dtype=np.int64).reshape(-1, seq))
+    windows = np.concatenate(parts, axis=0)
+    rng = np.random.default_rng(1337)
+    rng.shuffle(windows)
+    assert len(windows) >= n_windows, f"za malo okien: {len(windows)} < {n_windows}"
+    return torch.from_numpy(windows[:n_windows])
 
 
 def validate(model, tok):
     from datasets import load_dataset
+
     ds = load_dataset("Salesforce/wikitext", "wikitext-2-raw-v1", split="test")
     text = "".join(r["text"] for r in ds)
     ids = tok.encode(text).ids
-    ctx = 1024
-    burn = 32
+    ctx, burn = 1024, 32
     nll, ntok, nbytes = 0.0, 0, 0
-    t0 = time.time()
     with torch.no_grad():
-        for start in range(0, len(ids) - ctx - 1, ctx):
-            window = ids[start : start + ctx]
-            x = torch.tensor([window[:-1]])
-            y = torch.tensor([window[1:]])
-            logits, _ = model(x)
+        for s in range(0, len(ids) - ctx - 1, ctx):
+            w = ids[s: s + ctx]
+            out = model(torch.tensor([w[:-1]]))
+            logits = out[0] if isinstance(out, tuple) else out
             lp = torch.log_softmax(logits.float(), dim=-1)
-            tgt = y[0]
-            nll_w = -lp[0, burn:, :].gather(1, tgt[burn:, None]).sum()
-            n = ctx - 1 - burn
-            nll += nll_w.item()
-            ntok += n
-            covered = tok.decode(window[burn + 1 :])
-            nbytes += len(covered.encode("utf-8"))
-    tok_ppl = float(np.exp(nll / ntok))
-    byte_ppl = float(np.exp(nll / nbytes))
-    print(f"windows done in {time.time()-t0:.1f}s")
-    print(f"token ppl     : {tok_ppl:.4f}")
-    print(f"byte ppl      : {byte_ppl:.4f}   (model card WikiText-2: 2.2717)")
-    return byte_ppl
+            tgt = torch.tensor(w[1:])
+            nll += -lp[0, burn:].gather(1, tgt[burn:, None]).sum().item()
+            ntok += ctx - 1 - burn
+            nbytes += len(tok.decode(w[burn + 1:]).encode("utf-8"))
+    print(f"token ppl: {np.exp(nll / ntok):.4f}")
+    print(f"byte  ppl: {np.exp(nll / nbytes):.4f}")
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=["validate", "smoke", "mine"], default="mine")
-    ap.add_argument("--windows", type=int, default=1024)
-    ap.add_argument("--batch", type=int, default=8)
-    args = ap.parse_args()
-
     torch.set_num_threads(os.cpu_count())
-    from tokenizers import Tokenizer
-    tok = Tokenizer.from_file(os.path.join(MODEL_DIR, "tokenizer.json"))
     t0 = time.time()
-    _, model = load_gpt()
-    print(f"model loaded in {time.time()-t0:.1f}s")
-
-    if args.mode == "validate":
-        validate(model, tok)
-        return
-
-    t0 = time.time()
+    model, tok = load_model()
+    print(f"model {A.arch} w {time.time() - t0:.1f}s")
     saes = load_saes()
-    print(f"SAEs loaded in {time.time()-t0:.1f}s")
+    print(f"SAE: {A.layers} warstw, {A.d_model} -> {A.d_sae}, k={A.k}")
 
-    n_windows = 4 * args.batch if args.mode == "smoke" else args.windows
-    t0 = time.time()
-    windows = corpus_windows(n_windows, tok)
-    print(f"corpus: {n_windows} windows ({n_windows*SEQ:,} tokens) tokenized in {time.time()-t0:.1f}s")
+    n_batches = 4 if A.mode == "smoke" else A.windows // A.batch
+    n_windows = n_batches * A.batch
+    windows = corpus_windows(n_windows, tok, A.seq)
+    print(f"korpus: {n_windows} okien ({n_windows * A.seq:,} tokenow)")
 
-    top_vals = np.full((N_LAYER, D_SAE, N_TOP), -np.inf, dtype=np.float32)
-    top_locs = np.full((N_LAYER, D_SAE, N_TOP), -1, dtype=np.int64)
-    hit_counts = np.zeros((N_LAYER, D_SAE), dtype=np.int64)
-    total_tokens = 0
+    top_vals = np.full((A.layers, A.d_sae, A.n_top), -np.inf, dtype=np.float32)
+    top_locs = np.full((A.layers, A.d_sae, A.n_top), -1, dtype=np.int64)
+    hit_counts = np.zeros((A.layers, A.d_sae), dtype=np.int64)
 
-    n_batches = n_windows // args.batch
     t_start = time.time()
     with torch.no_grad():
         for bi in range(n_batches):
-            t_b = time.time()
-            bw = windows[bi * args.batch : (bi + 1) * args.batch]
-            idx = torch.from_numpy(bw.astype(np.int64))
+            bw = windows[bi * A.batch: (bi + 1) * A.batch]
+            idx = bw.to(torch.int64)
             res = forward_resid(model, idx)
-            win_ids = np.arange(bi * args.batch, (bi + 1) * args.batch, dtype=np.int64)
-            row_locs = (win_ids[:, None] * SEQ + np.arange(SEQ)[None, :]).reshape(-1)
-            for l in range(N_LAYER):
-                vals, fidx = sae_topk(saes[l], res[l].reshape(-1, D_EMBD))
-                vals = vals.numpy()
-                fidx = fidx.numpy()
-                valid = vals > 0
-                rows, cols = np.nonzero(valid)
+            row_locs = (np.arange(bi * A.batch, (bi + 1) * A.batch)[:, None] * A.seq
+                        + np.arange(A.seq)[None, :]).reshape(-1)
+            for l in range(A.layers):
+                x = res[l].reshape(-1, A.d_model)
+                pre = torch.relu((x - saes[l]["b_dec"]) @ saes[l]["W_enc"] + saes[l]["b_enc"])
+                vals, fidx = pre.topk(A.k, dim=-1)
+                vals, fidx = vals.numpy(), fidx.numpy()
+                rows, cols = np.nonzero(vals > 0)
                 f = fidx[rows, cols].astype(np.int64)
                 v = vals[rows, cols]
-                p = np.repeat(row_locs[rows], 1)
-                merge_top(top_vals[l], top_locs[l], f, v.astype(np.float32), p)
-                hit_counts[l] += np.bincount(f, minlength=D_SAE)
-            total_tokens += args.batch * SEQ
+                p = row_locs[rows]
+                merge_top(top_vals[l], top_locs[l], f, v.astype(np.float32), p, A.n_top)
+                hit_counts[l] += np.bincount(f, minlength=A.d_sae)
             if bi == 0:
-                logits, _ = model(idx[:, :64])
+                logits = model(idx[:, :64])
+                logits = logits[0] if isinstance(logits, tuple) else logits
                 loss = torch.nn.functional.cross_entropy(
-                    logits[0, :-1].reshape(-1, VOCAB).float(), idx[0, 1:64])
-                print(f"sanity LM loss (63 predicted tokens, batch 0): {loss.item():.4f}")
-            if (bi + 1) % 4 == 0 or args.mode == "smoke":
+                    logits[0, :-1].float(), idx[0, 1:64])
+                print(f"sanity LM loss: {loss.item():.4f}")
+            if (bi + 1) % 4 == 0 or A.mode == "smoke":
                 dt = time.time() - t_start
-                print(f"batch {bi+1}/{n_batches}  {dt:.1f}s elapsed  "
-                      f"({dt/(bi+1):.1f}s/batch, ETA {(n_batches-bi-1)*dt/(bi+1)/60:.0f} min)",
-                      flush=True)
-            if args.mode == "smoke" and bi == 3:
-                break
+                eta = (n_batches - bi - 1) * dt / (bi + 1) / 60
+                print(f"batch {bi + 1}/{n_batches}  {dt:.0f}s  ETA {eta:.0f} min", flush=True)
 
-    elapsed = time.time() - t_start
-    n_tok_used = total_tokens
-    density = hit_counts.astype(np.float32) / max(n_tok_used, 1)
-    print(f"mining done in {elapsed/60:.1f} min for {n_tok_used:,} tokens")
-
+    total = n_windows * A.seq
+    density = hit_counts.astype(np.float32) / total
     covered = (top_locs >= 0).sum(axis=2)
-    print(f"features with >=1 example: {(covered > 0).sum()} / {N_LAYER * D_SAE}")
-    print(f"features with full {N_TOP} examples: {(covered == N_TOP).sum()}")
+    print(f"featury z >=1 przykladem: {(covered > 0).sum()} / {A.layers * A.d_sae}")
+    print(f"featury z pelnym {A.n_top}: {(covered == A.n_top).sum()}")
 
-    if args.mode == "smoke":
+    if A.mode == "smoke":
         l = 0
         feat = int(np.argmax(top_vals[l, :, 0]))
-        v = top_vals[l, feat]
-        loc = top_locs[l, feat]
-        print(f"smoke top feature L{l} F{feat}: max={v[0]:.3f} locs={loc[:5].tolist()}")
+        print(f"smoke: L{l} F{feat} max={top_vals[l, feat, 0]:.3f}")
         return
 
-    os.makedirs(OUT_DIR, exist_ok=True)
-    for l in range(N_LAYER):
-        np.savez(os.path.join(OUT_DIR, f"layer{l}.npz"),
+    os.makedirs(A.out, exist_ok=True)
+    for l in range(A.layers):
+        np.savez(os.path.join(A.out, f"layer{l}.npz"),
                  top_vals=top_vals[l], top_locs=top_locs[l],
                  density=density[l], hit_counts=hit_counts[l])
-    np.save(os.path.join(OUT_DIR, "windows.npy"), windows)
-    with open(os.path.join(OUT_DIR, "meta.json"), "w") as f:
-        json.dump({"tokens": int(n_tok_used), "windows": n_windows, "seq": SEQ,
-                   "ctx": CTX, "topk": TOPK, "n_top": N_TOP,
-                   "seconds": elapsed}, f, indent=2)
-    print("wrote", OUT_DIR)
+    np.save(os.path.join(A.out, "windows.npy"), windows)
+    with open(os.path.join(A.out, "meta.json"), "w") as f:
+        json.dump({"arch": A.arch, "tokens": total, "windows": n_windows, "seq": A.seq,
+                   "ctx": A.ctx, "topk": A.k, "n_top": A.n_top,
+                   "d_sae": A.d_sae, "layers": A.layers, "mix_pl": A.mix_pl,
+                   "seconds": time.time() - t_start}, f, indent=2)
+    print(f"napisano {A.out}")
 
 
 if __name__ == "__main__":
+    if not os.path.isdir(A.sae_dir):
+        sys.exit(f"brak katalogu SAE: {A.sae_dir}")
     main()
