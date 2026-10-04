@@ -77,6 +77,22 @@ def install_shim() -> None:
 
     rmi.load_transcoder_from_hub = load_transcoder_from_hub
 
+    def ensure_tokenized(prompt, tokenizer, device, model_name=""):
+        """Upstream z odpowiednikiem `filter(None, ...)` — specjalny token o id 0
+        (np. |endoftext| w GoLLeM-v6) jest faliwy i upstream traci go przez
+        next(filter(None, ...)) -> StopIteration. Tu: `is not None`."""
+        import torch
+
+        tokens = tokenizer.encode(prompt) if isinstance(prompt, str) else prompt
+        tokens = torch.as_tensor(tokens).to(device).reshape(-1).long()
+        specials = [i for i in ([tokenizer.bos_token_id, tokenizer.pad_token_id, tokenizer.eos_token_id]
+                                + list(tokenizer.all_special_ids)) if i is not None]
+        if int(tokens[0]) not in {int(i) for i in tokenizer.all_special_ids}:
+            tokens = torch.cat([torch.tensor([specials[0]], device=device), tokens])
+        return tokens
+
+    rmi.ensure_tokenized = ensure_tokenized
+
 
 def main() -> None:
     install_shim()

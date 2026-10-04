@@ -13,10 +13,10 @@ index e039aa3..e1cc509 100644
  # Defaults for Steering
  NEXT_PUBLIC_DEFAULT_STEER_MODEL=gemma-2-2b-it
 diff --git a/apps/webapp/app/[modelId]/graph/link-graph.tsx b/apps/webapp/app/[modelId]/graph/link-graph.tsx
-index f23052d..bad19d3 100644
+index f23052d..b5d5900 100644
 --- a/apps/webapp/app/[modelId]/graph/link-graph.tsx
 +++ b/apps/webapp/app/[modelId]/graph/link-graph.tsx
-@@ -50,18 +50,31 @@ function clerpUUID(d: CLTGraphNode) {
+@@ -50,18 +50,34 @@ function clerpUUID(d: CLTGraphNode) {
    return `🤖${d.featureIndex}`;
  }
  
@@ -46,8 +46,11 @@ index f23052d..bad19d3 100644
 +  try {
 +    // We want to set on load here so that any page load will fix the key.
 +    if (localStorage.getItem(key) === null) localStorage.setItem(key, '[]');
-+    const hClerpArray = JSON.parse(localStorage.getItem(key) || '[]').filter((d) => d[0] !== clerpUUID(d));
-+    return new Map(hClerpArray);
++    const entries = JSON.parse(localStorage.getItem(key) || '[]') as [string, unknown][];
++    // Upstream compares each stored entry against clerpUUID(entry); entries have no
++    // featureIndex, so this drops the literal '🤖undefined' key. Behavior preserved.
++    const staleEntryKey = clerpUUID({} as CLTGraphNode);
++    return new Map(entries.filter((d) => d[0] !== staleEntryKey));
 +  } catch {
 +    return new Map(memoryClerps);
 +  }
@@ -119,11 +122,66 @@ index 80fb2d3..75b7cdd 100644
      });
      await s3Client.send(
        new PutObjectCommand({
+diff --git a/apps/webapp/lib/db/compute-host.ts b/apps/webapp/lib/db/compute-host.ts
+index 5ce142e..1d3a755 100644
+--- a/apps/webapp/lib/db/compute-host.ts
++++ b/apps/webapp/lib/db/compute-host.ts
+@@ -10,6 +10,31 @@ import {
+ import { getSourceSetNameFromSource } from '../utils/source';
+ import { AuthenticatedUser } from '../with-user';
+ import { userCanAccessModelAndSourceSet } from './userCanAccess';
++import type { Agent as UndiciAgent, setGlobalDispatcher as SetGlobalDispatcherFn } from 'undici';
++
++// Node's built-in fetch (undici) drops a connection that has not returned
++// response *headers* within 300s, whatever AbortSignal the caller passes — CPU
++// attribution hosts exceed that (GoLLeM-v6 ~8 min). Relax the transport ceiling
++// once per server process; per-request deadlines stay enforced by
++// ATTEMPT_TIMEOUT_MS below.
++//
++// The value import below MUST stay dynamic: a static `import 'undici'` cannot
++// work here because this module is reachable from shared UI code, and webpack
++// would chase node-only `undici` (node:assert/async_hooks/buffer) into the
++// client bundle and fail the build. webpackIgnore keeps it out; node resolves
++// it at runtime. Types come from the type-only import above.
++let transportTuned = false;
++async function tuneTransport(): Promise<void> {
++  if (transportTuned || typeof window !== 'undefined') {
++    return;
++  }
++  transportTuned = true;
++  const undici = (await import(/* webpackIgnore: true */ 'undici')) as {
++    Agent: typeof UndiciAgent;
++    setGlobalDispatcher: typeof SetGlobalDispatcherFn;
++  };
++  undici.setGlobalDispatcher(new undici.Agent({ headersTimeout: 1_800_000, bodyTimeout: 1_800_000 }));
++}
+ 
+ /**
+  * Ceiling on one attempt, per service, so a host that accepts the connection
+@@ -27,7 +52,9 @@ import { userCanAccessModelAndSourceSet } from './userCanAccess';
+  * deadlines live beside those calls, in `lib/utils/inference.ts`.
+  */
+ const ATTEMPT_TIMEOUT_MS: Partial<Record<ComputeService, number>> = {
+-  [ComputeService.GRAPH]: 300_000,
++  // 30 min: a CPU-only attribution host needs far longer than the GPU pods this
++  // was sized for (GoLLeM-v6 + 20 res-v6 layers takes ~8 min on one core).
++  [ComputeService.GRAPH]: 1_800_000,
+   [ComputeService.NLA]: 90_000,
+ };
+ 
+@@ -242,6 +269,7 @@ export async function computeFetch(
+   path: string,
+   init: Omit<RequestInit, 'headers'> & { headers?: HeadersInit; timeoutMs?: number } = {},
+ ): Promise<Response> {
++  await tuneTransport();
+   const hosts = await resolveHosts(target);
+   if (hosts.length === 0) {
+     throw new NoComputeHostError(target);
 diff --git a/apps/webapp/lib/utils/graph.ts b/apps/webapp/lib/utils/graph.ts
-index 8e934b5..7ae16b7 100644
+index 8e934b5..d7d500c 100644
 --- a/apps/webapp/lib/utils/graph.ts
 +++ b/apps/webapp/lib/utils/graph.ts
-@@ -32,7 +32,13 @@ export const GRAPH_BATCH_SIZE = 48;
+@@ -32,7 +32,14 @@ export const GRAPH_BATCH_SIZE = 48;
  export const getEstimatedTimeFromNumTokens = (numTokens: number, slower: boolean = false, isLorsa: boolean = false) =>
    11.2 * Math.log2(Math.max(numTokens, 4)) - 7 + (slower ? 20 : 0) + (isLorsa ? 20 : 0);
  export const GRAPH_MAX_TOKENS = 64;
@@ -134,17 +192,19 @@ index 8e934b5..7ae16b7 100644
 +  'qwen3-4b',
 +  'qwen3-1.7b',
 +  'gollem-v5-128m-muon-v1',
++  'gollem-v6-250m',
 +];
  
  export const LORSA_MODELS = ['qwen3-1.7b'];
  export const LORSA_BATCH_SIZE = 16;
-@@ -42,6 +48,9 @@ export const GRAPH_MODEL_MAP = {
+@@ -42,6 +49,10 @@ export const GRAPH_MODEL_MAP = {
    'gemma-3-4b-it': 'google/gemma-3-4b-it',
    'qwen3-4b': 'Qwen/Qwen3-4B',
    'qwen3-1.7b': 'Qwen/Qwen3-1.7B',
 +  // GoLLeM-v5 is supplied locally (HF wrapper in gollem-np/hf_wrap), not loaded from the Hub;
 +  // this matches the value in np_model_to_hf.json, which the graph server labels scans with.
 +  'gollem-v5-128m-muon-v1': process.env.GOLLEM_HF_MODEL_PATH ?? 'C:/Users/Hipek/gollem-np/hf_wrap',
++  'gollem-v6-250m': process.env.GOLLEM_V6_HF_MODEL_PATH ?? 'C:/Users/Hipek/gollem-np/hf_wrap_gollem_v6',
  };
  
  export const GRAPH_S3_USER_GRAPHS_DIR = 'user-graphs';

@@ -22,16 +22,17 @@ Graph JSON is read from the S3 shim directory (server-local) or over HTTP
 """
 import argparse
 import glob
+import importlib
 import json
 import os
 import time
 import urllib.request
 
 WEBAPP = os.environ.get("WEBAPP_URL", "http://127.0.0.1:3000")
-MODEL_ID = "gollem-v5-128m-muon-v1"
+MODEL_ID = os.environ.get("NP_MODEL_ID", "gollem-v5-128m-muon-v1")
 API_KEY = os.environ.get("NP_API_KEY") or open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "api_key.txt")).read().strip().split("=")[-1]
 S3_DATA = os.environ.get("S3_DATA", "/opt/gollem-np/s3_data/neuronpedia-attrib/user-graphs")
-HF_WRAP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hf_wrap")
+HF_WRAP = os.environ.get("NP_HF_WRAP", os.path.join(os.path.dirname(os.path.abspath(__file__)), "hf_wrap"))
 
 
 def api(path, body=None, method="POST"):
@@ -44,19 +45,29 @@ def api(path, body=None, method="POST"):
     return json.load(urllib.request.urlopen(req, timeout=600))
 
 
+WRAPPERS = {
+    "hf_wrap": ("hf_wrap.configuration_gollem_v5", "GollemV5Config",
+                "hf_wrap.modeling_gollem_v5", "GollemV5ForCausalLM"),
+    "hf_wrap_gollem_v6": ("hf_wrap_gollem_v6.configuration_gollem_v6", "GollemV6Config",
+                          "hf_wrap_gollem_v6.modeling_gollem_v6", "GollemV6ForCausalLM"),
+}
+
+
 def greedy(prompt: str, n_tokens: int = 3):
     """Greedy completion with the HF wrapper; returns (token_ids, token_strings)."""
     import torch
     import sys
 
-    sys.path.insert(0, os.path.dirname(HF_WRAP))
-    from hf_wrap.configuration_gollem_v5 import GollemV5Config
-    from hf_wrap.modeling_gollem_v5 import GollemV5ForCausalLM
     from safetensors.torch import load_file
     from tokenizers import Tokenizer
 
+    sys.path.insert(0, os.path.dirname(HF_WRAP))
+    cfg_mod, cfg_cls, lm_mod, lm_cls = WRAPPERS[os.path.basename(HF_WRAP)]
+    Config = getattr(importlib.import_module(cfg_mod), cfg_cls)
+    Model = getattr(importlib.import_module(lm_mod), lm_cls)
+
     tok = Tokenizer.from_file(os.path.join(HF_WRAP, "tokenizer.json"))
-    model = GollemV5ForCausalLM(GollemV5Config())
+    model = Model(Config())
     model.load_state_dict(load_file(os.path.join(HF_WRAP, "model.safetensors")))
     model.eval()
     ids = tok.encode(prompt).ids
@@ -64,7 +75,9 @@ def greedy(prompt: str, n_tokens: int = 3):
     with torch.no_grad():
         x = torch.tensor([ids])
         for _ in range(n_tokens):
-            nxt = int(model(x).logits[0, -1].argmax())
+            out = model(x)
+            logits = out[0] if isinstance(out, tuple) else out.logits
+            nxt = int(logits[0, -1].argmax())
             out_ids.append(nxt)
             x = torch.cat([x, torch.tensor([[nxt]])], dim=1)
     return out_ids, [tok.id_to_token(i) for i in out_ids]
