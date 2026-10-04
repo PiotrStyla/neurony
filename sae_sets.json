@@ -1,0 +1,230 @@
+{
+  "gollem-v5-res-v5": {
+    "d_in": 768,
+    "d_sae": 6144,
+    "file_template": "res_v5_layer{layer}_final.safetensors",
+    "hf_repo": "PiotrSty/gollem-v5-128m-sae-res-v5",
+    "hook": "res_post_block",
+    "k": 50,
+    "layers": 16,
+    "license": "see model card (derived work of base model + WikiText)",
+    "metrics_fvu_dead": {
+      "0": [
+        "0.0787",
+        "0.0002"
+      ],
+      "1": [
+        "0.0761",
+        "0.0002"
+      ],
+      "10": [
+        "0.1958",
+        "0.0000"
+      ],
+      "11": [
+        "0.2058",
+        "0.0000"
+      ],
+      "12": [
+        "0.2066",
+        "0.0000"
+      ],
+      "13": [
+        "0.2229",
+        "0.0002"
+      ],
+      "14": [
+        "0.2330",
+        "0.0000"
+      ],
+      "15": [
+        "0.2382",
+        "0.0000"
+      ],
+      "2": [
+        "0.1316",
+        "0.0000"
+      ],
+      "3": [
+        "0.0717",
+        "0.0000"
+      ],
+      "4": [
+        "0.0728",
+        "0.0000"
+      ],
+      "5": [
+        "0.0985",
+        "0.0000"
+      ],
+      "6": [
+        "0.1209",
+        "0.0000"
+      ],
+      "7": [
+        "0.2137",
+        "0.0000"
+      ],
+      "8": [
+        "0.1988",
+        "0.0000"
+      ],
+      "9": [
+        "0.2016",
+        "0.0000"
+      ]
+    },
+    "model": "Maggio33/GoLLeM-v5-128M-Muon-v1",
+    "model_id": "gollem-v5-128m-muon-v1",
+    "scan_name": "res-v5",
+    "sha256": {
+      "res_v5_layer0_final.safetensors": "ee5475707caefe2b516eeebf900ba87bb5991a0f41cce3705f91fbd31bd448d2",
+      "res_v5_layer10_final.safetensors": "6eda69bd7495614e531f7b0a2ca044e6371ae3ea4cf1b05cb3bfd20725497d3e",
+      "res_v5_layer11_final.safetensors": "9ff75d5ac59ef918fdffeeb8430179929da8a325c059117bc9ff7bdde273ec92",
+      "res_v5_layer12_final.safetensors": "cae5518d1f98abb621be7a27d17942e722096eee5715016e98c5bea10d9da41b",
+      "res_v5_layer13_final.safetensors": "07d7db91e1790f15b1b737cf1a854e2d564757c836fc4adb62215317c1f11cae",
+      "res_v5_layer14_final.safetensors": "01e2020b145c0e9a85ffa62aecdf29400c1ff039e5234bfe170df2d75d4af050",
+      "res_v5_layer15_final.safetensors": "96fb5f7d81d355c79666a0e11a008a065f3113c1103d9331e97cba8b9d9afe66",
+      "res_v5_layer1_final.safetensors": "faf22acb26d661951c12974f2c29dfedbe20012b6cc944f365b9afa42803bad8",
+      "res_v5_layer2_final.safetensors": "0a39448154d61df0d5beeedf03acfc1e7a540988156a7d5164ce0fada5b50f0e",
+      "res_v5_layer3_final.safetensors": "b9133e89e65b707dac61610dac7ccbac2ae1f4d873ed982ead551595bbc68db5",
+      "res_v5_layer4_final.safetensors": "4d6ef0d5e4b97ca16ae08e6bc4bd7aef54c99af1a8d747f57a108bef8f5d7d04",
+      "res_v5_layer5_final.safetensors": "57c6087c3313d8298b90cea67770ae955043adc03d2fe80b56a4f16803552292",
+      "res_v5_layer6_final.safetensors": "9ad5d011105a8aba115e6267c6f988771c4e38b05a8b61960ff9918879d66728",
+      "res_v5_layer7_final.safetensors": "0d004c70c70cdff3f8a5b2e11616b8c3fece3d06f33d0d231a3dd9a4c0a48662",
+      "res_v5_layer8_final.safetensors": "709651cecfa4f672fe41fd43785fe1936d362e7d88314c8d5872547af004904d",
+      "res_v5_layer9_final.safetensors": "e5a547581041e7f1046e814e48b21e315eb9ad88c7ad2f149bc4496c7bffea7a"
+    },
+    "training": {
+      "batch": 8,
+      "lr": 0.001,
+      "seq": 512,
+      "steps": 655,
+      "tokens": 2682880
+    }
+  },
+  "gollem-v6-res-v6": {
+    "d_in": 960,
+    "d_sae": 7680,
+    "file_template": "res_v6_layer{layer}_final.safetensors",
+    "hf_repo": "PiotrSty/gollem-v6-250m-sae-res-v6",
+    "hook": "res_post_block",
+    "k": 50,
+    "layers": 20,
+    "license": "cc-by-sa-4.0",
+    "metrics_fvu_dead": {
+      "0": [
+        "0.0593",
+        "0.0624"
+      ],
+      "1": [
+        "0.0732",
+        "0.0609"
+      ],
+      "10": [
+        "0.1664",
+        "0.0400"
+      ],
+      "11": [
+        "0.1783",
+        "0.0384"
+      ],
+      "12": [
+        "0.1886",
+        "0.0574"
+      ],
+      "13": [
+        "0.1986",
+        "0.0622"
+      ],
+      "14": [
+        "0.2078",
+        "0.0736"
+      ],
+      "15": [
+        "0.2074",
+        "0.0991"
+      ],
+      "16": [
+        "0.2096",
+        "0.1484"
+      ],
+      "17": [
+        "0.2162",
+        "0.1714"
+      ],
+      "18": [
+        "0.2303",
+        "0.1490"
+      ],
+      "19": [
+        "0.2276",
+        "0.0556"
+      ],
+      "2": [
+        "0.1146",
+        "0.0423"
+      ],
+      "3": [
+        "0.0879",
+        "0.0286"
+      ],
+      "4": [
+        "0.0816",
+        "0.0250"
+      ],
+      "5": [
+        "0.0939",
+        "0.0366"
+      ],
+      "6": [
+        "0.0655",
+        "0.0406"
+      ],
+      "7": [
+        "0.0956",
+        "0.0441"
+      ],
+      "8": [
+        "0.1210",
+        "0.0504"
+      ],
+      "9": [
+        "0.1432",
+        "0.0443"
+      ]
+    },
+    "model": "SlayerLab/GoLLeM-v6-250M",
+    "model_id": "gollem-v6-250m",
+    "scan_name": "res-v6",
+    "sha256": {
+      "res_v6_layer0_final.safetensors": "5cf2939cc22c31577843a042093d16f159f8fc0214769933f214ae0429c233cb",
+      "res_v6_layer10_final.safetensors": "8238c1f352ae082691cadf1cf3dcadb1ef13a64e5370381ff26e14a89c8b3e15",
+      "res_v6_layer11_final.safetensors": "1972a6b26a4c831e5c82cf28336d1eaeb6e96baec7bef005c728fcef3aee60ad",
+      "res_v6_layer12_final.safetensors": "9db2451f847e5cf4ef98f6649534d297ebac8b67a2fb46aa375acf215890bf05",
+      "res_v6_layer13_final.safetensors": "8df93dd902207f2644dbb230613fc7cea241010b98c1124c3d792f9f774c6602",
+      "res_v6_layer14_final.safetensors": "18aa22b1914ce214624fa3fe687323a028190ddc0825026b5b6161357e5de4f9",
+      "res_v6_layer15_final.safetensors": "d74ac96267865209089e8a432478065c33d78112256d2e88716fba95f7f53ba2",
+      "res_v6_layer16_final.safetensors": "123ec7985529591a9fbf673d8b7edf8468c7aa30ffef22105758f84faa560983",
+      "res_v6_layer17_final.safetensors": "4043ed88efd7a34b3f478f3cef28e86fc3f9ade7e03c98a32ad43b8c8343ed88",
+      "res_v6_layer18_final.safetensors": "f24058f922bfd02fc7342de1294bb7dcc6b5c0f5b22c5d94d35d187da732d5e8",
+      "res_v6_layer19_final.safetensors": "835bd27f2e41903b11e55a217bb0d761a6b0e4592c904b6d42a3ee5a04cbae47",
+      "res_v6_layer1_final.safetensors": "701004478a7d129e2e74b206c4b0fd938b0890732069ea9c1503340316eeb044",
+      "res_v6_layer2_final.safetensors": "5b61695e2d3a1daad27bea13169661d6da30124afdcc79bc1da0c46f736cf0a0",
+      "res_v6_layer3_final.safetensors": "e27ddd8268a8602ce368ee015542592190dabce068cdc921eab46b64f10d0e20",
+      "res_v6_layer4_final.safetensors": "ccc6388449e47c4592da4b79c4bbee4be1cc4b01057e08ffa72fed05038d7307",
+      "res_v6_layer5_final.safetensors": "26277b4049d7876b8c55f0a25c46f904852dddcb65ab6a10b61f3ea9c89376b0",
+      "res_v6_layer6_final.safetensors": "d94becb2e6aa89dcccb7e0ea9d535da0defca8f13bbb14e2ec095f886088a2e5",
+      "res_v6_layer7_final.safetensors": "5db74704e0d03c31f2effd4a6e1de1c9d6c94a3c3537db66a96a4182f70eb330",
+      "res_v6_layer8_final.safetensors": "26edbb1f89f4a2db9dcdd95cdf595d82bd7357e0b2d892281b1f6f45f36baf47",
+      "res_v6_layer9_final.safetensors": "1dcb2e38845ad53da53612b5a6602dfb38c54af2b7892b2b4933d3f68ec1a307"
+    },
+    "training": {
+      "batch": 8,
+      "lr": 0.001,
+      "seq": 512,
+      "steps": 655,
+      "tokens": 2682880
+    }
+  }
+}
