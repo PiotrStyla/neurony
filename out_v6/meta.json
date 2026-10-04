@@ -1,0 +1,13 @@
+{
+  "arch": "gollem_v6",
+  "tokens": 524288,
+  "windows": 1024,
+  "seq": 512,
+  "ctx": 8,
+  "topk": 50,
+  "n_top": 20,
+  "d_sae": 7680,
+  "layers": 20,
+  "mix_pl": 0.5,
+  "seconds": 2937.019107580185
+}

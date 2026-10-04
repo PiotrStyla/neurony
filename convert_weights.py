@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Convert GoLLeM-v5 weights to the HF-wrapper key layout + verify forward parity.
+"""Convert GoLLeM weights to the HF-wrapper key layout + verify forward parity.
 
-Original keys (train_gpt_ref.GPT / published safetensors) -> wrapper keys
-(GollemV5ForCausalLM, Llama/Qwen3-conventional module tree so that
-interp-engine's structural discovery finds decoder_layers/self_attn/mlp/lm_head):
+Key remap (identical for v5/v6 — both checkpoints use the training-script names) ->
+Llama/Qwen3-conventional tree (interp-engine's structural discovery):
 
   tok.weight                 -> model.embed_tokens.weight
   head.weight                -> lm_head.weight            (tied; kept identical)
@@ -17,12 +16,17 @@ interp-engine's structural discovery finds decoder_layers/self_attn/mlp/lm_head)
   blocks.{i}.mlp.gate.weight -> model.layers.{i}.mlp.gate_proj.weight
   blocks.{i}.mlp.up.weight   -> model.layers.{i}.mlp.up_proj.weight
   blocks.{i}.mlp.down.weight -> model.layers.{i}.mlp.down_proj.weight
-  blocks.{i}.vr_lambda       -> model.layers.{i}.vr_lambda
+  blocks.{i}.vr_lambda       -> model.layers.{i}.self_attn.vr_lambda
 
-Parity check: wrapper logits vs train_gpt_ref.GPT logits on random tokens (tol 2e-4).
+Parity (2e-4 na logitach) z referencją architektury:
+  gollem_v5 -> train_gpt_ref.py (SlayerLab/gollem-v5-ckpts, Apache-2.0; pobierany na żądanie)
+  gollem_v6 -> modeling_gollem_v6.py z repo modelu (oficjalny kod)
+
+Usage: python convert_weights.py [--arch gollem_v5|gollem_v6] [--skip-parity]
 """
 import argparse
 import importlib.util
+import json
 import os
 from types import SimpleNamespace
 
@@ -30,9 +34,21 @@ import torch
 from safetensors.torch import load_file, save_file
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-SRC = os.path.join(ROOT, "data", "model", "model.safetensors")
-DST_DIR = os.path.join(ROOT, "hf_wrap")
-VOCAB, N_LAYER, N_HEAD, D_EMBD = 12288, 16, 12, 768
+
+ARCH = {
+    "gollem_v5": {
+        "src": os.path.join(ROOT, "data", "model", "model.safetensors"),
+        "dst": os.path.join(ROOT, "hf_wrap"),
+        "wrapper": ("hf_wrap.modeling_gollem_v5", "GollemV5Config", "GollemV5ForCausalLM"),
+        "dims": (12288, 16, 12, 768),  # vocab, layers, heads, d_model
+    },
+    "gollem_v6": {
+        "src": os.path.join(ROOT, "data", "model_v6", "model.safetensors"),
+        "dst": os.path.join(ROOT, "hf_wrap_gollem_v6"),
+        "wrapper": ("hf_wrap_gollem_v6.modeling_gollem_v6", "GollemV6Config", "GollemV6ForCausalLM"),
+        "dims": (32768, 20, 15, 960),
+    },
+}
 
 # reference implementation (SlayerLab/gollem-v5-ckpts); fetched on demand, not vendored
 TRAIN_GPT_REF_URL = (
@@ -59,7 +75,7 @@ def remap_key(key: str) -> str:
     if key == "lnf.weight":
         return "model.norm.weight"
     assert key.startswith("blocks."), key
-    rest = key[len("blocks.") :]
+    rest = key[len("blocks."):]
     layer, tail = rest.split(".", 1)
     tail_map = {
         "ln1.weight": "input_layernorm.weight",
@@ -78,41 +94,60 @@ def remap_key(key: str) -> str:
     return f"model.layers.{layer}.{tail_map[tail]}"
 
 
-def convert():
-    sd = load_file(SRC)
+def convert(a):
+    sd = load_file(a["src"])
     out = {remap_key(k): v.contiguous() for k, v in sd.items()}
-    os.makedirs(DST_DIR, exist_ok=True)
-    save_file(out, os.path.join(DST_DIR, "model.safetensors"))
-    print(f"wrote {len(out)} tensors -> {DST_DIR}/model.safetensors")
-    return sd, out
+    os.makedirs(a["dst"], exist_ok=True)
+    save_file(out, os.path.join(a["dst"], "model.safetensors"))
+    print(f"wrote {len(out)} tensors -> {a['dst']}/model.safetensors")
+    return sd
 
 
-def check_parity(orig_sd):
-    import sys
-    sys.path.insert(0, ROOT)
-    from hf_wrap.modeling_gollem_v5 import GollemV5Config, GollemV5ForCausalLM
-
+def load_reference(arch: str, orig_sd):
+    """Oficjalna referencja architektury: (model, czy zwraca krotke)."""
+    if arch == "gollem_v6":
+        sys_path = os.path.join(ROOT, "data", "model_v6")
+        spec = importlib.util.spec_from_file_location("mgv6", os.path.join(sys_path, "modeling_gollem_v6.py"))
+        mgv6 = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mgv6)
+        cfg = SimpleNamespace(**json.load(open(os.path.join(sys_path, "config.json"))))
+        ref = mgv6.GPT(cfg.vocab, cfg.n_layer, cfg.n_embd, cfg.n_head, cfg.block, cfg)
+        ref.load_state_dict(orig_sd)
+        ref.eval()
+        return ref, False
     spec = importlib.util.spec_from_file_location("tgr", ensure_train_gpt_ref())
     tgr = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(tgr)
-
     cfg = SimpleNamespace(pos="rope", norm="rmsnorm", norm_eps=1e-6, ffn="swiglu",
                           ffn_mult=2.667, value_residual=True, qk_norm=True, rope_theta=100000.0)
-    ref = tgr.GPT(VOCAB, N_LAYER, D_EMBD, N_HEAD, 1024, cfg)
+    vocab, layers, heads, d_model = ARCH["gollem_v5"]["dims"]
+    ref = tgr.GPT(vocab, layers, d_model, heads, 1024, cfg)
     ref.load_state_dict(orig_sd)
     ref.eval()
+    return ref, True
 
-    hfcfg = GollemV5Config(vocab_size=VOCAB, hidden_size=D_EMBD, num_hidden_layers=N_LAYER,
-                           num_attention_heads=N_HEAD, rope_theta=100000.0,
-                           rms_norm_eps=1e-6, ffn_mult=2.667, max_position_embeddings=1024)
-    hf = GollemV5ForCausalLM(hfcfg)
-    hf.load_state_dict(load_file(os.path.join(DST_DIR, "model.safetensors")))
+
+def check_parity(arch: str, orig_sd):
+    import sys
+
+    sys.path.insert(0, ROOT)
+    a = ARCH[arch]
+    vocab, layers, heads, d_model = a["dims"]
+    mod_name, cfg_cls, lm_cls = a["wrapper"]
+    mod = importlib.import_module(mod_name)
+    WrapperCfg, WrapperLM = getattr(mod, cfg_cls), getattr(mod, lm_cls)
+
+    ref, ref_returns_tuple = load_reference(arch, orig_sd)
+    hf = WrapperLM(WrapperCfg(vocab_size=vocab, hidden_size=d_model, num_hidden_layers=layers,
+                              num_attention_heads=heads))
+    hf.load_state_dict(load_file(os.path.join(a["dst"], "model.safetensors")))
     hf.eval()
 
     torch.manual_seed(0)
-    ids = torch.randint(0, VOCAB, (2, 128))
+    ids = torch.randint(0, vocab, (2, 128))
     with torch.no_grad():
-        ref_logits, _ = ref(ids)
+        ref_out = ref(ids)
+        ref_logits = ref_out[0] if ref_returns_tuple else ref_out
         hf_logits = hf(ids).logits
     diff = (ref_logits.float() - hf_logits.float()).abs().max().item()
     print(f"max |logit diff| = {diff:.2e}")
@@ -122,8 +157,9 @@ def check_parity(orig_sd):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
+    ap.add_argument("--arch", choices=list(ARCH), default="gollem_v5")
     ap.add_argument("--skip-parity", action="store_true")
     args = ap.parse_args()
-    orig_sd, _ = convert()
+    orig_sd = convert(ARCH[args.arch])
     if not args.skip_parity:
-        check_parity(orig_sd)
+        check_parity(args.arch, orig_sd)

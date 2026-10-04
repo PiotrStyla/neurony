@@ -117,8 +117,11 @@ def self_test(a):
     print(f"encode pre diff : {d_pre:.3e}")
     print(f"top-k val diff  : {d_act:.3e}")
     print(f"decode diff     : {d_dec:.3e}")
-    # absolute floor + scale term (aktywacje potrafią mieć rząd 1e4)
-    tol = 1e-3 + 1e-7 * float(vals.abs().max())
+    # tolerancja skalowo-relatywna: skladanie biasow anuluje duze skladowe
+    # (resztki v6 maja rzad 1e3 -> fp32 daje ~2e-3 bezwzglednie, relatywnie ~1e-7)
+    scale = float(pre_sae.abs().max())
+    tol = 1e-3 + 1e-6 * scale
+    print(f"skala pre={scale:.2e}, tol={tol:.2e}")
     assert max(d_pre, d_act, d_dec) < tol, "SAE CONVERSION MISMATCH"
     print("SAE CONVERSION OK")
 

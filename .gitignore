@@ -2,8 +2,8 @@
 data/
 out/
 s3_data/
-hf_wrap/model.safetensors
-hf_wrap/tokenizer.json
+hf_wrap*/model.safetensors
+hf_wrap*/tokenizer.json
 train_gpt_ref.py
 
 # local runtime state and secrets
