@@ -1,0 +1,8 @@
+[
+  {"prompt": "The author of Hamlet was", "expect": "Shakespeare", "group": "error"},
+  {"prompt": "The capital of Japan is", "expect": "Tokyo", "group": "error"},
+  {"prompt": "The number of continents on Earth is", "expect": "7", "group": "error"},
+  {"prompt": "Water freezes at", "expect": "0", "group": "error"},
+  {"prompt": "The capital of France is", "expect": "Paris", "group": "control"},
+  {"prompt": "The capital of Germany is", "expect": "Berlin", "group": "control"}
+]
