@@ -184,18 +184,21 @@ for step in range(STEPS):
     batch = windows[24 + step * BATCH: 24 + (step + 1) * BATCH]
     with torch.no_grad():
         rs = resid_post(batch)                     # [20, 4096, 960]
+    step_losses = []
     for l in range(cfg.n_layer):
         x = rs[l]
-        with torch.autocast('cuda', dtype=torch.float16):
-            x_hat, vals, idx = saes[l](x)
-            loss = F.mse_loss(x_hat, x)
+        x_hat, vals, idx = saes[l](x)              # fp32: przy dużych normach warstw środkowych fp16 się przelewał
+        loss = F.mse_loss(x_hat, x)
+        assert torch.isfinite(loss), f'nie-skończona strata: krok {step}, warstwa {l}'
         opts[l].zero_grad(set_to_none=True)
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(saes[l].parameters(), 1.0)
         opts[l].step()
         saes[l].renorm_decoder()
+        step_losses.append(loss.item())
     if (step + 1) % 50 == 0:
         dt = time.time() - t0
-        print(f'step {step + 1}/{STEPS}  loss(last layer) {loss.item():.4f}  {dt:.0f}s  ETA {(STEPS - step - 1) * dt / (step + 1) / 60:.0f} min', flush=True)
+        print(f'step {step + 1}/{STEPS}  loss sr {sum(step_losses) / len(step_losses):.4f}  max {max(step_losses):.4f}  {dt:.0f}s  ETA {(STEPS - step - 1) * dt / (step + 1) / 60:.0f} min', flush=True)
 print(f'trening: {(time.time() - t0) / 60:.1f} min')"""
 
 MD_5 = "## 5. Metryki: FVU i odsetek martwych featurów\n\nOdnośnik `res-v5`: FVU 0.07–0.24, dead frac ≈ 0%."
