@@ -61,9 +61,10 @@ STEPS = 655                # 655 x 8 x 512 = 2.68M tokenów (jak w res-v5)
 LR = 1e-3                  # Adam (jak w res-v5)
 DATA_MIX = {'en': 0.5, 'pl': 0.5}
 SEED = 1337
+WARMUP = 24               # okna na estymację b_dec (poza treningiem)
 torch.manual_seed(SEED)
-n_tokens_target = STEPS * BATCH * SEQ
-print(f'cel: {n_tokens_target:,} tokenów | SAE: {D_MODEL} -> {D_SAE}, k={K}')"""
+n_tokens_target = (STEPS * BATCH + WARMUP) * SEQ   # trening + zapas na b_dec
+print(f'cel: {n_tokens_target:,} tokenów (w tym {WARMUP} okien na b_dec) | SAE: {D_MODEL} -> {D_SAE}, k={K}')"""
 
 C_DATA = """from datasets import load_dataset
 
@@ -107,7 +108,7 @@ rng = np.random.default_rng(SEED)
 rng.shuffle(windows)
 windows = torch.from_numpy(windows)
 assert len(windows) >= STEPS * BATCH + 24, f'za mało danych: {len(windows)} okien < {STEPS * BATCH + 24}'
-windows = windows[:STEPS * BATCH + 24]  # 24 okna na estymację b_dec
+windows = windows[:STEPS * BATCH + 24]  # WARMUP okien na estymację b_dec
 print('okna:', tuple(windows.shape))"""
 
 MD_3 = """## 3. TopKSAE i zbieranie `res_post_block`

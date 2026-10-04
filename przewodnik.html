@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<title>GoLLeM-v5 × Neuronpedia — przewodnik</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  * { box-sizing: border-box; }
+  body { font-family: "Segoe UI", Inter, Arial, sans-serif; color: #1c2733; font-size: 10.5pt; line-height: 1.5; margin: 0; }
+  h1 { font-size: 22pt; margin: 0 0 2mm; letter-spacing: -0.3px; }
+  h2 { font-size: 14pt; margin: 8mm 0 2mm; padding-bottom: 1.5mm; border-bottom: 2px solid #0e7490; color: #0e7490; }
+  h3 { font-size: 11.5pt; margin: 5mm 0 1.5mm; color: #155e75; }
+  p, li { margin: 1.5mm 0; }
+  code, pre { font-family: Consolas, "Cascadia Mono", monospace; font-size: 8.8pt; background: #f1f5f9; border-radius: 3px; }
+  code { padding: 0.5px 3px; }
+  pre { padding: 2.5mm 3mm; border-left: 3px solid #0e7490; white-space: pre-wrap; page-break-inside: avoid; }
+  table { border-collapse: collapse; width: 100%; margin: 2mm 0 3mm; page-break-inside: avoid; }
+  th, td { border: 1px solid #cbd5e1; padding: 1.6mm 2mm; text-align: left; vertical-align: top; font-size: 9.5pt; }
+  th { background: #e8f1f5; }
+  .cover { border-left: 6px solid #0e7490; padding: 4mm 5mm; background: #f0f9fb; margin-bottom: 6mm; }
+  .note { background: #fffbeb; border-left: 4px solid #d97706; padding: 2.5mm 3mm; margin: 3mm 0; page-break-inside: avoid; }
+  .ok  { background: #f0fdf4; border-left: 4px solid #16a34a; padding: 2.5mm 3mm; margin: 3mm 0; page-break-inside: avoid; }
+  .arch { background: #f8fafc; border: 1px solid #cbd5e1; padding: 3mm; font-family: Consolas, monospace; font-size: 8.6pt; white-space: pre; line-height: 1.45; page-break-inside: avoid; }
+  .pb { page-break-before: always; }
+  .muted { color: #64748b; }
+  ul, ol { padding-left: 6mm; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+<h1>GoLLeM-v5 × Neuronpedia</h1>
+<p style="font-size:12pt;margin-top:0"><b>Przewodnik po systemie interpretability</b> — jak to działa i jak z tego korzystać</p>
+<p class="muted">Model: GoLLeM-v5-128M-Muon-v1 (122.8M, 16 warstw, d_model 768) · SAE: res-v5 (16 × 6144 cech, TopK-50, strumień resztkowy po bloku) · Serwer: 69.164.245.217 · Domena: <b>https://neurony.duckdns.org</b> · Kod: github.com/PiotrStyla/neurony</p>
+</div>
+
+<h3>Spis treści</h3>
+<ol>
+<li>Co masz — w skrócie</li>
+<li>Jak to działa (architektura i droga grafu)</li>
+<li>Konta i logowanie</li>
+<li>Featury SAE — przeglądanie</li>
+<li>Circuit Tracer — pierwszy graf krok po kroku</li>
+<li>Jak czytać graf atrybucji</li>
+<li>Badanie błędów modelu — workflow i case study</li>
+<li>Automatyzacja: fault_scan.py</li>
+<li>Operacje i serwisowanie</li>
+<li>Bezpieczeństwo, ograniczenia, licencje</li>
+</ol>
+
+<h2>1. Co masz — w skrócie</h2>
+<p>Pełny stos interpretability dla GoLLeM-v5: model rozłożony na <b>98 304 cechy</b> (16 warstw × 6144 featurów SAE), z których każda ma stronę z <b>20 top-aktywacjami</b> (1.93 mln aktywacji łącznie), oraz <b>circuit tracer</b>, który dla dowolnego promptu rysuje <b>graf atrybucji</b> — mapę, które cechy i które tokeny złożyły się na decyzję modelu o następnym słowie.</p>
+<ul>
+<li><b>Przeglądanie cech</b> — co model „wie" w poszczególnych warstwach.</li>
+<li><b>Grafy atrybucji</b> — dlaczego model powiedział X, a nie Y (per prompt, ~2,5 min).</li>
+<li><b>Workflow badań błędów</b> — od znalezienia błędnej odpowiedzi do zidentyfikowania featura-„winowajcy" i testu, czy to cała klasa błędów.</li>
+</ul>
+
+<h2>2. Jak to działa (architektura)</h2>
+<div class="arch">Przeglądarka
+   │  https://neurony.duckdns.org (TLS, Let's Encrypt)
+   ▼
+Caddy :443  ──►  webapp (Next.js, :3000)  ──►  Postgres + pgvector (:5432, docker)
+   │                  │                        użytkownicy, 98 304 featury,
+   │                  │                        1.93 mln aktywacji, grafy
+   │                  │
+   │                  ├──►  graph server (:5004)
+   │                  │      interp-engine (hooking modelu HF)
+   │                  │      + circuit-tracer (atrybucja)
+   │                  │      model: hf_wrap (GoLLeM jako AutoModel HF)
+   │                  │      SAE: ~/.cache/circuit_tracer/local/gollem-res-v5
+   │                  └──►  s3-shim (:9000) — JSON-y grafów
+   └── /s3/*  ───────►  s3-shim (publiczny dostęp do JSON-ów)
+
+Na serwerze:  /opt/neuronpedia  (webapp + graph server)
+              /opt/gollem-np    (hf_wrap, konwersje, skrypty, dane)</div>
+
+<h3>Jak powstaje graf — pięć kroków pod spodem</h3>
+<ol>
+<li><b>Forward</b> — prompt przez model (tokeny → logity następnego tokenu).</li>
+<li><b>Cechy</b> — strumień resztkowy po każdym bloku (L0…L15) jest przepuszczany przez SAE danej warstwy; TopK-50 daje ~50 aktywnych featurów na token (to są węzły grafu).</li>
+<li><b>Model zastępczy</b> — circuit-tracer „zastępuje" obliczenia przez cechy: wzorce atencji i skale norm są zamrożone (weryfikowane liczbowo przy starcie), gradient płynie przez liniowe ścieżki cech.</li>
+<li><b>Atrybucja</b> — liczone są pochodne (jakobiany) logitu odpowiedzi względem wszystkich cech i tokenów wejścia → macierz wpływu.</li>
+<li><b>Pruning + zapis</b> — słabe węzły/krawędzie odcinane progami; wynik to JSON (≈800 węzłów / ~8–10 tys. połączeń) zapisywany w s3-shim i podpinany pod stronę.</li>
+</ol>
+
+<h2 class="pb">3. Konta i logowanie</h2>
+<table>
+<tr><th>Element</th><th>Wartość</th></tr>
+<tr><td>Adres</td><td><code>https://neurony.duckdns.org</code></td></tr>
+<tr><td>Konto admina</td><td><code>johnny@neuronpedia.org</code> (właściciel modelu, SAE i grafów)</td></tr>
+<tr><td>Logowanie</td><td>jednorazowy link magic (ważny 7 dni)</td></tr>
+</table>
+<p><b>Nowy link logowania</b> (na serwerze):</p>
+<pre>cd /opt/neuronpedia/apps/webapp && node -e '
+const fs=require("fs"),crypto=require("crypto"),dotenv=require("dotenv");
+Object.assign(process.env,dotenv.parse(fs.readFileSync(".env.localhost")));
+const t=crypto.randomBytes(32).toString("hex");
+const h=crypto.createHash("sha256").update(t+process.env.NEXTAUTH_SECRET).digest("hex");
+const {PrismaClient}=require("@prisma/client"); const p=new PrismaClient();
+(async()=>{await p.verificationToken.deleteMany({where:{identifier:"johnny@neuronpedia.org"}});
+await p.verificationToken.create({data:{identifier:"johnny@neuronpedia.org",token:h,expires:new Date(Date.now()+7*864e5)}});
+console.log("https://neurony.duckdns.org/api/auth/callback/email?token="+t+"&email=johnny%40neuronpedia.org&callbackUrl=%2F");})();'</pre>
+<p class="muted">Przeglądanie (featury, grafy) działa też bez logowania — konto potrzebne do zapisu podgraphów, komentarzy i bycia autorem grafów.</p>
+
+<h2>4. Featury SAE — przeglądanie</h2>
+<p>Wejdź na <code>/gollem-v5-128m-muon-v1</code> — 16 zbiorów <code>0-res-v5 … 15-res-v5</code>, po 6144 featurów każdy. Albo od razu na stronę featura: <code>/gollem-v5-128m-muon-v1/15-res-v5/2881</code>, albo przez <b>Jump To</b> w menu.</p>
+<h3>Co widzisz na stronie featura</h3>
+<ul>
+<li><b>Top Activations</b> — 20 kontekstów z WikiText, w których featur odpalał się najmocniej. Podświetlony token = miejsce aktywacji; liczba obok = wartość.</li>
+<li><b>Density</b> (frac_nonzero) — jaka część tokenów w ogóle go aktywuje (np. 3.5% = cecha „przeciętna", 0.01% = rzadka/niszowa).</li>
+<li><b>PREV / NEXT</b> — sąsiednie featury; <b>INDEKS + GO</b> — skok do dowolnego.</li>
+</ul>
+<div class="note"><b>Praktyka:</b> featur bez opisu poznajesz po top-aktywacjach. Szukaj powtarzalnego wzorca semantycznego w 3–5 kontekstach — jeśli się powtarza, masz nazwę cechy. Np. featur <code>15/2881</code> pali się na „X <i>is/was</i> …" („…is located on…", „…is technically a…") = <b>cecha „kopeła z definicją"</b>.</div>
+
+<h2>5. Circuit Tracer — pierwszy graf krok po kroku</h2>
+<ol>
+<li>Wejdź na <code>/gollem-v5-128m-muon-v1/graph</code>.</li>
+<li>Kliknij <b>+ New Graph</b>. Model: <b>GoLLeM-v5-128M Muon v1</b>, Source Set: <b>RES-V5</b> (dobiera się sam).</li>
+<li>Wpisz prompt — najlepiej taki, który <b>kończy się tuż przed słowem-odpowiedzią</b>:<br><code>The capital of Germany is</code>, <code>The author of Hamlet was</code>, <code>Water freezes at</code>.</li>
+<li>Podgląd pokazuje tokeny i top-kandydatów następnego tokenu z modelu (to już jest „co model chce powiedzieć").</li>
+<li><b>Start Generation</b> — liczy się ~2–3 min (1 rdzeń CPU). Dostaniesz <b>Graph Generated Successfully</b> z liczbą węzłów i linkiem.</li>
+<li><b>Open Graph</b> — gotowe.</li>
+</ol>
+<p class="muted">Limit 64 tokenów na prompt. Wynik jest zapisywany na stałe (baza + plik JSON) — wrócisz do niego z listy „Select a Graph" lub przez URL ze slugiem.</p>
+
+<h2 class="pb">6. Jak czytać graf atrybucji</h2>
+<div class="arch">Lgt   ● ● ●            ← logity: kandydaci następnego tokenu (kolumny odpowiedzi)
+L15   ● ● ● ● ●       ← cechy SAE warstwy 15 (najbliższe decyzji)
+ ...  ...
+L0    ● ● ● ● ●       ← cechy warstwy 0 (najbliższe wejścia)
+Emb   |endoftext| The author of Ham let was   |  a born the an one ...
+      └───────────── tokeny promptu ─────────┘  └── kandydaci odpowiedzi ──┘</div>
+<table>
+<tr><th>Element</th><th>Znaczenie</th></tr>
+<tr><td>wiersze</td><td><b>Emb</b> = osadzenia wejścia (tokeny), <b>L0–L15</b> = cechy z 16 warstw, <b>Lgt</b> = logity wyjścia</td></tr>
+<tr><td>kolumny</td><td>tokeny promptu oraz kandydaci odpowiedzi (dla Lgt)</td></tr>
+<tr><td>węzeł (kółko)</td><td>pojedynczy featur SAE aktywny przy danym tokenie; rozmiar/jasność ~ wpływ</td></tr>
+<tr><td>krawędź</td><td>atrybucja: jak bardzo węzeł zasila węzeł docelowy (im grubsza, tym większy udział w decyzji)</td></tr>
+<tr><td>suwak „% of the Influence"</td><td>przycinanie szumu — 80% zostawia szkielet, 100% pokazuje wszystko</td></tr>
+</table>
+<h3>Narzędzia</h3>
+<ul>
+<li><b>Hover</b> na węźle → <b>Feature Details</b> (warstwa + indeks featura = link do jego strony z aktywacjami).</li>
+<li><b>Klik</b> → <b>Node Connections</b> — co go zasila (wejścia) i dokąd pisze (wyjścia). Tu czytasz „obwód": szukaj ścieżki od kolumny <code>Ham let</code> do kolumny <code>a</code>.</li>
+<li><b>Pin Node / Grouping Mode / Save</b> (panel Subgraph) — wydziel i zapisz podgraf jako udokumentowany wniosek.</li>
+<li><b>Remix</b> — ten sam prompt, inne progi pruningu. <b>Info</b> — metadane generacji.</li>
+<li>W URL-u ręcznie: <code>&pruningThreshold=0.3&densityThreshold=0.99</code> (niższy próg = więcej węzłów).</li>
+</ul>
+
+<h2>7. Badanie błędów modelu — workflow i case study</h2>
+<h3>Pętla badawcza</h3>
+<ol>
+<li><b>Znajdź błąd</b> — prosty prompt faktograficzny; sprawdź odpowiedź modelu vs prawda (patrz §8: <code>probe</code>).</li>
+<li><b>Wygeneruj graf</b> dla tego promptu (<code>explain</code> albo §5).</li>
+<li><b>Wybierz featur-winowajcę</b> — najsilniejsza krawędź do logitu złego tokenu (panel Node Connections).</li>
+<li><b>Zcharakteryzuj go</b> — strona featura: top-aktywacje → nazwa po ludzku.</li>
+<li><b>Test kontrafaktyczny</b> — podobne prompty (zmiana jednego składnika): czy ten sam featur steruje błędem? Czy pojawia się też przy odpowiedziach POPRAWNYCH (kontrola)?</li>
+<li><b>Wniosek</b> — jednostkowy przypadek czy cała klasa błędów; podgraf zapisany przez Pin/Save.</li>
+</ol>
+
+<h3>Case study: „The author of Hamlet was"</h3>
+<div class="ok"><b>Błąd:</b> model odpowiada <code>a poet,</code> zamiast <i>Shakespeare</i>. Rozkład: „ a" 19.8%, „ born" 8.6%, „ William" 0.5%, <b>„Shakespeare" poza top-15</b>.</div>
+<p><b>Krok 2–3:</b> graf (864 węzły / 9465 połączeń) — najsilniejszy motor złego tokenu to featur <code>15-res-v5/2881</code> (+1.043 do logitu „ a", aktywacja 1822 na pozycji „was").</p>
+<p><b>Krok 4:</b> top-aktywacje <code>2881</code> = „X <i>is/was</i> …" (definicje: „…is technically a…", „…is an oncogene") — czyli <b>obwód „opis/rzeczownik"</b>. Pisze w tokeny-opisy („a", „the"…), nigdy w nazwy własne.</p>
+<p><b>Diagnoza:</b> model nie myli faktu — <b>brakuje mu obwodu nazw własnych</b>, a obwód definicyjny zamiata odpowiedź w tryb opisu.</p>
+<p><b>Krok 5:</b> kontrola ujemna <code>Shakespeare is</code> (tu „a playwright" jest DOBRE) + test klasy <code>The capital of Japan is</code> (sondowy błąd „the city of"). Jeśli tam też rządzi <code>2881</code> — to systematyczna klasa błędów „opis zamiast nazwy", nie jednostkowy przypadek.</p>
+
+<h2 class="pb">8. Automatyzacja: fault_scan.py</h2>
+<p>Skrypt w repo <code>neurony</code> (na serwerze: <code>/opt/gollem-np/fault_scan.py</code>) domyka pętlę z §7 w trzech trybach:</p>
+<pre># 1. szukanie błędów — greedy completion vs oczekiwana odpowiedź
+/opt/neuronpedia/apps/graph/.venv/bin/python fault_scan.py probe --cases cases.json
+
+# 2. jedno wyjaśnienie — graf + top-5 featurów sterujących + ich top-aktywacje
+/opt/neuronpedia/apps/graph/.venv/bin/python fault_scan.py explain --prompt "The capital of Japan is"
+
+# 3. test klasy błędów — error vs control; które featury się POWTARZAJĄ w błędach
+/opt/neuronpedia/apps/graph/.venv/bin/python fault_scan.py class --cases cases_class_v1.json</pre>
+<p>Format <code>cases.json</code>:</p>
+<pre>[ { "prompt": "The capital of Japan is", "expect": "Tokyo", "group": "error" },  … ]</pre>
+<p>Tryb <code>class</code> generuje graf dla każdego promptu (~2,5 min/szt.) i wypisuje <b>featury wspólne dla błędów</b>, których nie ma w kontrolach — to kandydaci na przyczynę obwodową całej klasy błędów.</p>
+
+<h2>9. Operacje i serwisowanie</h2>
+<table>
+<tr><th>Usługa</th><th>Rola</th><th>Sterowanie</th></tr>
+<tr><td><code>np-webapp</code></td><td>serwis WWW + API (produkcja, :3000)</td><td><code>systemctl restart np-webapp</code></td></tr>
+<tr><td><code>np-graph</code></td><td>generowanie grafów (:5004, loopback)</td><td><code>systemctl restart np-graph</code></td></tr>
+<tr><td><code>np-s3shim</code></td><td>magazyn JSON-ów grafów (:9000, loopback)</td><td><code>systemctl restart np-s3shim</code></td></tr>
+<tr><td><code>np-postgres</code> (docker)</td><td>baza + pgvector (loopback:5432)</td><td><code>docker start np-postgres</code></td></tr>
+<tr><td>Caddy</td><td>TLS + reverse proxy (domeny)</td><td><code>systemctl reload caddy</code></td></tr>
+<tr><td>cron DDNS</td><td>świeży rekord DNS co 5 min</td><td><code>/etc/cron.d/duckdns-neurony</code></td></tr>
+</table>
+<h3>Najczęstsze czynności</h3>
+<ul>
+<li><b>Logi generacji grafu:</b> <code>journalctl -u np-graph -f</code></li>
+<li><b>Backup bazy:</b> <code>docker exec np-postgres pg_dump -U postgres postgres &gt; backup.sql</code></li>
+<li><b>Pliki grafów:</b> <code>/opt/gollem-np/s3_data/neuronpedia-attrib/user-graphs/</code></li>
+<li><b>Po restarcie całego VPS-a:</b> <code>docker start np-postgres &amp;&amp; systemctl start np-webapp np-graph np-s3shim</code></li>
+<li><b>Kolejna domena:</b> dopisz blok w <code>/etc/caddy/Caddyfile</code> (wzór: sekcja <code>neurony.duckdns.org</code>) + <code>systemctl reload caddy</code>.</li>
+<li><b>Lokalny odpowiednik (opcjonalnie, Windows):</b> <code>python s3_shim.py</code>, <code>start_graph_gollem.py</code> (z katalogu <code>apps/graph</code>), <code>env-cmd -f .env.localhost "next dev --turbopack"</code>.</li>
+</ul>
+
+<h2>10. Bezpieczeństwo, ograniczenia, licencje</h2>
+<h3>Do zrobienia / pilnowania</h3>
+<ul>
+<li><b>Rotacja sekretów:</b> hasło roota SSH (pojawiało się w korespondencji) oraz <b>token DuckDNS</b> (siedzi w <code>/etc/cron.d/duckdns-neurony</code>) — po rotacji podmień w cronie.</li>
+<li>Ruch idzie przez 443 (Caddy); port 3000 można domknąć: <code>ufw delete allow 3000/tcp</code>.</li>
+<li>Linki logowania są jednorazowe i wygasają po 7 dniach (§3 generuje nowy).</li>
+</ul>
+<h3>Ograniczenia systemu</h3>
+<ul>
+<li><b>Brak live steeringu/aktywacji w oknie</b> — wymaga serwera inference z mapowaniem architektury (TransformerLens); grafy i analiza offline to pokrywają w ~95% zastosowań.</li>
+<li><b>1 rdzeń CPU</b> — graf liczy się ~2–3 min; przy długich promptach i wielu grafach planuj czas.</li>
+<li>Featury bez opisów tekstowych — nazwa cechy to robota człowieka z top-aktywacji (można podpiąć autointerp/LLM).</li>
+</ul>
+<h3>Licencje</h3>
+<ul>
+<li>Kod w <code>github.com/PiotrStyla/neurony</code>: <b>Apache-2.0</b> + plik <b>NOTICE</b> z atrybucjami (circuit-tracer: MIT — Hanna &amp; Piotrowski; neuronpedia i interp-engine: Apache-2.0 — J. Lin / Decoderesearch; train_gpt_ref.py: Apache-2.0 — SlayerLab/Fabryka AI).</li>
+<li>Wagi modelu i SAE nie są częścią repo — warunki na kartach HF (model: „gollem-v5-see-training-data"; SAE: byt pochodny modelu + WikiText CC BY-SA).</li>
+</ul>
+
+</body>
+</html>
