@@ -211,7 +211,7 @@ def evaluate():
             err = (x - x_hat).pow(2).sum()
             tot = (x - x.mean(0, keepdim=True)).pow(2).sum()
             fvu_all.append((err / tot.clamp_min(1e-12)).item())
-            hits.scatter_add_(1, idx, torch.ones_like(vals))
+            hits[l].scatter_add_(0, idx.reshape(-1), torch.ones(idx.numel(), device=vals.device))
     n = len(fvu_all) // cfg.n_layer
     fvu_per_layer = [sum(fvu_all[l::cfg.n_layer]) / n for l in range(cfg.n_layer)]
     dead_per_layer = [(hits[l] == 0).float().mean().item() for l in range(cfg.n_layer)]
