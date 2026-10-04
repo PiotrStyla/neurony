@@ -99,11 +99,16 @@ def explain(prompt: str, top_n: int = 5):
     for w, src in drivers[:top_n]:
         n = nodes[src]
         layer, feat = src.split("_")[0], src.split("_")[1]
-        if not layer.isdigit():  # input-token embed nodes look like E_<tokenid>_<ctx>
-            print(f"  {w:+7.3f}  [input token id {feat}]")
+        if n["feature_type"] == "logit" or not layer.isdigit():
+            # logit nodes sit at row 17 and embed nodes look like E_<tokenid>_<ctx>
+            print(f"  {w:+7.3f}  [{n['feature_type']} id {feat}]")
             continue
         picked[f"{layer}/{feat}"] = w
-        detail = api(f"/api/feature/{MODEL_ID}/{layer}-res-v5/{feat}")
+        try:
+            detail = api(f"/api/feature/{MODEL_ID}/{layer}-res-v5/{feat}")
+        except Exception as exc:  # a missing feature page must not kill the report
+            print(f"            (brak strony featura: {exc})")
+            continue
         acts = sorted(detail.get("activations", []), key=lambda a: -a.get("maxValue", 0))[:3]
         print(f"  {w:+7.3f}  {layer}-res-v5/{feat:<5} density={detail.get('frac_nonzero', 0):.3f}")
         for a in acts:
