@@ -334,15 +334,19 @@ print('CEL: greedy >= 24/31 i HOLD-OUT >= 6/8 ->', 'PASS' if (hits_a >= 24 and h
 
 MD_6 = "## 6. Zapis wariantu + publikacja (opcjonalnie)"
 
-C_SAVE = '''import hashlib
+C_SAVE = '''# === 6. Zapis wariantu + publikacja na Hugging Face ===
+import hashlib, os, shutil
+
+OUT_DIR = globals().get("OUT_DIR", "/content/gollem-v6-sft")
+REPO_ID = "PiotrSty/gollem-v6-250m-sft-answers"
+
 save_file({k: v.detach().cpu().contiguous() for k, v in model.state_dict().items()},
-          f'{OUT_DIR}/model.safetensors')
-for f in ('config.json', 'tokenizer.json', 'modeling_gollem_v6.py'):
-    import shutil
-    shutil.copy(f'{MODEL_DIR}/{f}', f'{OUT_DIR}/{f}')
-sha = hashlib.sha256(open(f'{OUT_DIR}/model.safetensors', 'rb').read()).hexdigest()
-readme = ''' + '"""' + '''
----
+          f"{OUT_DIR}/model.safetensors")
+for f in ("config.json", "tokenizer.json", "modeling_gollem_v6.py"):
+    shutil.copy(f"{MODEL_DIR}/{f}", f"{OUT_DIR}/{f}")
+
+sha = hashlib.sha256(open(f"{OUT_DIR}/model.safetensors", "rb").read()).hexdigest()
+readme = f"""---
 license: cc-by-sa-4.0
 language:
 - pl
@@ -356,21 +360,29 @@ tags:
 
 # GoLLeM-v6 250M - answer-format + knowledge SFT
 
-Dwie fazy SFT na bazie SlayerLab/GoLLeM-v6-250M: (1) format odpowiedzi
-(pytanie -> nazwa, augmentacja formatow PL/EN, CE tylko na odpowiedzi),
-(2) wiedza (fakty PL/EN + LM-mix na WikiText przeciw zapominaniu).
-Pomiar: 32-promptowa bateria PL/EN (greedy + rank pierwszego tokenu).
+Dwie fazy SFT na bazie SlayerLab/GoLLeM-v6-250M: format odpowiedzi
+(pytanie -> nazwa, CE tylko na odpowiedzi) + wiedza (fakty PL/EN
+z parami kontrastowymi, LM-mix na WikiText przeciw zapominaniu).
 
-model.safetensors sha256: `''' + ''' + sha + ''' + '''`
-Pochodna CC-BY-SA-4.0 (model bazowy SlayerLab/Fabryka AI).
-''' + '"""' + '''
-open(f'{OUT_DIR}/README.md', 'w').write(readme)
-print('zapisano:', sorted(os.listdir(OUT_DIR)), '| sha256:', sha[:16], '...')
+Pomiar (bateria 32 PL/EN): greedy 9/31 -> 23/31, HOLD-OUT (8 par poza
+treningiem) greedy 0/8 -> 6/8, odpowiedz w top-10 4/8 -> 8/8.
 
-# publikacja (odkomentuj):
-# from huggingface_hub import login, HfApi
-# login()  # token z write
-# HfApi().upload_folder(folder_path=OUT_DIR, repo_id='PiotrSty/gollem-v6-250m-sft-answers', repo_type='model')'''
+model.safetensors sha256: `{sha}`
+
+Pochodna CC-BY-SA-4.0 (model bazowy: SlayerLab/Fabryka AI).
+"""
+open(f"{OUT_DIR}/README.md", "w").write(readme)
+print("zapisano:", sorted(os.listdir(OUT_DIR)))
+print("sha256:", sha)
+
+# publikacja
+from huggingface_hub import login, HfApi, create_repo
+login()  # token HF z uprawnieniem "write"
+create_repo(REPO_ID, repo_type="model", exist_ok=True, private=False)
+HfApi().upload_folder(folder_path=OUT_DIR, repo_id=REPO_ID, repo_type="model",
+                      commit_message="v6 + SFT: answer-format + knowledge (contrast pairs)")
+print("opublikowane:", HfApi().list_repo_files(REPO_ID, repo_type="model"))
+print("-> https://huggingface.co/" + REPO_ID)'''
 
 MD_7 = """## 7. Dalsze kroki
 

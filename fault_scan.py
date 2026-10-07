@@ -32,6 +32,7 @@ WEBAPP = os.environ.get("WEBAPP_URL", "http://127.0.0.1:3000")
 MODEL_ID = os.environ.get("NP_MODEL_ID", "gollem-v5-128m-muon-v1")
 API_KEY = os.environ.get("NP_API_KEY") or open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "api_key.txt")).read().strip().split("=")[-1]
 S3_DATA = os.environ.get("S3_DATA", "/opt/gollem-np/s3_data/neuronpedia-attrib/user-graphs")
+SOURCE_SUFFIX = os.environ.get("NP_SOURCE_SUFFIX", "res-v5")
 HF_WRAP = os.environ.get("NP_HF_WRAP", os.path.join(os.path.dirname(os.path.abspath(__file__)), "hf_wrap"))
 
 
@@ -118,7 +119,7 @@ def explain(prompt: str, top_n: int = 5):
             continue
         picked[f"{layer}/{feat}"] = w
         try:
-            detail = api(f"/api/feature/{MODEL_ID}/{layer}-res-v5/{feat}")
+            detail = api(f"/api/feature/{MODEL_ID}/{layer}-{SOURCE_SUFFIX}/{feat}")
         except Exception as exc:  # a missing feature page must not kill the report
             print(f"            (brak strony featura: {exc})")
             continue
