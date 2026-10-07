@@ -159,6 +159,22 @@ EXTRA_FACTS = [
     ('The chemical symbol for iron is', 'Fe'), ('The closest planet to the sun is', 'Mercury'),
     ('The smallest planet in the solar system is', 'Mercury'),
     ('The human heart has', '4'), ('The square root of 144 is', '12'),
+    # v2: celowane uzupelnienie luk z pierwszego przebiegu (osoby/daty/liczby)
+    ('Autorem Pana Tadeusza jest', 'Mickiewicz'), ('Tworca Lalki byl', 'Prus'),
+    ('Autorem Krzyzakow jest', 'Sienkiewicz'), ('Autorem Chlopow jest', 'Reymont'),
+    ('Wesele napisal', 'Wyspianski'), ('Ferdydurke napisal', 'Gombrowicz'),
+    ('Nobla z poezji otrzymal Czeslaw', 'Milosz'), ('Quo Vadis napisal', 'Sienkiewicz'),
+    ('Rozbior Polski nastapil w', '1795'), ('Konstytucja 3 maja uchwalona w', '1791'),
+    ('Polska wstapila do Unii w', '2004'), ('Rok konca II wojny swiatowej to', '1945'),
+    ('Liczba planet w ukladzie slonecznym to', '8'), ('Liczba dni w roku przestepnym to', '366'),
+    ('Rownanie kwadratowe ma', '2'), ('Trojkat ma', '3'), ('Tuzin to', '12'),
+    ('The writer of Animal Farm was', 'Orwell'), ('Harry Potter was written by', 'Rowling'),
+    ('The author of Othello was', 'Shakespeare'), ('The author of Dune was', 'Herbert'),
+    ('The author of Dorian Gray was', 'Wilde'),
+    ('The Berlin Wall fell in', '1989'), ('The first iPhone was released in', '2007'),
+    ('A century has', '100'), ('A decade has', '10'),
+    ('A triangle has', '3'), ('A hexagon has', '6'),
+    ('The square root of 64 is', '8'),
 ]
 
 # warianty formatow: (szablon promptu, szablon odpowiedzi)
