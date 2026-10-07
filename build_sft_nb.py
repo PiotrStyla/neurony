@@ -20,7 +20,7 @@ MD_1 = "## 1. Instalacja i model bazowy"
 
 C_PIP = "!pip install -q huggingface_hub tokenizers safetensors"
 
-C_LOAD = """import json, os, sys, time
+C_LOAD = """import json, os, sys, time, unicodedata
 import torch
 import torch.nn.functional as F
 from safetensors.torch import load_file, save_file
@@ -88,6 +88,12 @@ HOLD_OUT = {
 }
 
 
+def _norm(s):
+    # Paryz == Paryż: sędzia liczy trafienia niezależnie od diakrytyków i ogonków
+    s = unicodedata.normalize('NFKD', s).encode('ascii', 'ignore').decode()
+    return ''.join(c for c in s.lower() if c.isalnum())
+
+
 @torch.no_grad()
 def evaluate(tag):
     rows = []
@@ -103,7 +109,7 @@ def evaluate(tag):
         first = tok.encode(' ' + answer).ids[0]
         last_logits = model(torch.tensor([ids], device=DEVICE))[0, -1].float()
         rank = int((last_logits > last_logits[first]).sum()) + 1
-        hit = answer.lower() in ''.join(out).lower().replace('Ġ', ' ')
+        hit = _norm(answer) in _norm(''.join(out))
         rows.append({'prompt': prompt, 'answer': answer, 'group': group,
                      'greedy': ''.join(out), 'hit': hit, 'rank': rank,
                      'holdout': prompt in HOLD_OUT})
@@ -199,7 +205,7 @@ MD_4 = "## 4. Trening: CE na odpowiedzi (prompt maskowany) + LM-mix w fazie 2"
 C_TRAIN = '''LR = 1e-5            # konserwatywnie: naprawic format, nie zepsuc modelu
 BATCH = 8
 EPOCHS_1 = 2
-EPOCHS_2 = 1
+EPOCHS_2 = 3          # wzmocniona faza wiedzy: wczesniejsza iteracja brala 1
 LM_MIX = 1.0         # co drugi krok fazy 2 = LM-loss na WikiText
 
 def build_batch(items, with_answer_mask=True):
@@ -262,7 +268,11 @@ for b, a in zip(before, after):
         h = 'H' if b['holdout'] else ' '
         print(f"  {h} {b['prompt'][:38]:38} rank {b['rank']:>5} -> {a['rank']:<5} greedy {b['greedy'][:18]!r} -> {a['greedy'][:18]!r}")
 hb = [r for r in before if r['holdout']]; ha = [r for r in after if r['holdout']]
-print(f'HOLD-OUT (generalizacja): greedy {sum(r["hit"] for r in hb)}/{len(hb)} -> {sum(r["hit"] for r in ha)}/{len(ha)} | top-10 rank {sum(r["rank"]<=10 for r in hb)}/{len(hb)} -> {sum(r["rank"]<=10 for r in ha)}/{len(ha)}')'''
+print(f'HOLD-OUT (generalizacja): greedy {sum(r["hit"] for r in hb)}/{len(hb)} -> {sum(r["hit"] for r in ha)}/{len(ha)} | top-10 rank {sum(r["rank"]<=10 for r in hb)}/{len(hb)} -> {sum(r["rank"]<=10 for r in ha)}/{len(ha)}')
+hits_a = sum(r['hit'] for r in after)
+hold_a = sum(r['hit'] for r in ha)
+print()
+print('CEL: greedy >= 24/31 i HOLD-OUT >= 6/8 ->', 'PASS' if (hits_a >= 24 and hold_a >= 6) else 'JESZCZE NIE')'''
 
 MD_6 = "## 6. Zapis wariantu + publikacja (opcjonalnie)"
 
