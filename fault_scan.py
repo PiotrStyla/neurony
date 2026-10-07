@@ -43,7 +43,7 @@ def api(path, body=None, method="POST"):
         method="GET" if body is None else method,
         headers={"Content-Type": "application/json", "x-api-key": API_KEY},
     )
-    return json.load(urllib.request.urlopen(req, timeout=600))
+    return json.load(urllib.request.urlopen(req, timeout=1800))
 
 
 WRAPPERS = {
@@ -124,7 +124,7 @@ def explain(prompt: str, top_n: int = 5):
             print(f"            (brak strony featura: {exc})")
             continue
         acts = sorted(detail.get("activations", []), key=lambda a: -a.get("maxValue", 0))[:3]
-        print(f"  {w:+7.3f}  {layer}-res-v5/{feat:<5} density={detail.get('frac_nonzero', 0):.3f}")
+        print(f"  {w:+7.3f}  {layer}-{SOURCE_SUFFIX}/{feat:<5} density={detail.get('frac_nonzero', 0):.3f}")
         for a in acts:
             toks, vals = a["tokens"], a["values"]
             i = max(range(len(vals)), key=lambda j: vals[j])

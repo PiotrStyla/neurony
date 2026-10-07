@@ -158,8 +158,15 @@ def check_parity(arch: str, orig_sd):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--arch", choices=list(ARCH), default="gollem_v5")
+    ap.add_argument("--src", help="nadhodzacy plik model.safetensors (domyslnie z ARCH)")
+    ap.add_argument("--dst", help="katalog wrapperu docelowego (domyslnie z ARCH)")
     ap.add_argument("--skip-parity", action="store_true")
     args = ap.parse_args()
-    orig_sd = convert(ARCH[args.arch])
+    arch = dict(ARCH[args.arch])
+    if args.src:
+        arch["src"] = args.src
+    if args.dst:
+        arch["dst"] = args.dst
+    orig_sd = convert(arch)
     if not args.skip_parity:
         check_parity(args.arch, orig_sd)
