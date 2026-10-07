@@ -96,12 +96,12 @@ def evaluate(tag):
         x = torch.tensor([ids], device=DEVICE)
         out = []
         for _ in range(3):
-            logits = model(x).logits[0, -1].float()
+            logits = model(x)[0, -1].float()
             nxt = int(logits.argmax())
             out.append(tok.id_to_token(nxt))
             x = torch.cat([x, torch.tensor([[nxt]], device=DEVICE)], dim=1)
         first = tok.encode(' ' + answer).ids[0]
-        last_logits = model(torch.tensor([ids], device=DEVICE)).logits[0, -1].float()
+        last_logits = model(torch.tensor([ids], device=DEVICE))[0, -1].float()
         rank = int((last_logits > last_logits[first]).sum()) + 1
         hit = answer.lower() in ''.join(out).lower().replace('Ġ', ' ')
         rows.append({'prompt': prompt, 'answer': answer, 'group': group,
@@ -233,7 +233,7 @@ def run_epoch(items, tag, with_mask=True):
     for i in range(0, len(items), BATCH):
         chunk = items[i: i + BATCH]
         X, Y = build_batch(chunk, with_answer_mask=with_mask)
-        logits = model(X).logits
+        logits = model(X)  # oficjalny modeling_gollem_v6 zwraca tensor logitow
         loss = F.cross_entropy(logits[:, :-1].reshape(-1, logits.size(-1)).float(),
                                Y[:, 1:].reshape(-1), ignore_index=-100)
         assert torch.isfinite(loss), 'nie-skonczona strata'
