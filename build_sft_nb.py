@@ -94,6 +94,10 @@ def _norm(s):
     return ''.join(c for c in s.lower() if c.isalnum())
 
 
+def _deacc(s):
+    return unicodedata.normalize('NFKD', s).encode('ascii', 'ignore').decode()
+
+
 @torch.no_grad()
 def evaluate(tag):
     rows = []
@@ -106,9 +110,9 @@ def evaluate(tag):
             nxt = int(logits.argmax())
             out.append(tok.id_to_token(nxt))
             x = torch.cat([x, torch.tensor([[nxt]], device=DEVICE)], dim=1)
-        first = tok.encode(' ' + answer).ids[0]
+        first_ids = {tok.encode(' ' + answer).ids[0], tok.encode(' ' + _deacc(answer)).ids[0]}
         last_logits = model(torch.tensor([ids], device=DEVICE))[0, -1].float()
-        rank = int((last_logits > last_logits[first]).sum()) + 1
+        rank = min(int((last_logits > last_logits[f]).sum()) + 1 for f in first_ids)
         hit = _norm(answer) in _norm(''.join(out))
         rows.append({'prompt': prompt, 'answer': answer, 'group': group,
                      'greedy': ''.join(out), 'hit': hit, 'rank': rank,
@@ -175,6 +179,21 @@ EXTRA_FACTS = [
     ('A century has', '100'), ('A decade has', '10'),
     ('A triangle has', '3'), ('A hexagon has', '6'),
     ('The square root of 64 is', '8'),
+    # v3: pary kontrastowe — v2 pokazal interferencje sasiednich faktow
+    # (Wisla wyparta przez Nil, Jupiter przez Mercury, Au przez Ag)
+    ('Najdluzsza rzeka w Polsce to', 'Wisla'), ('Najdluzsza rzeka swiata to', 'Nil'),
+    ('Najdluzsza rzeka w Europie to', 'Wolga'),
+    ('Najwieksze jezioro w Polsce to', 'Sniardwy'), ('Najglebsze jezioro w Polsce to', 'Hancza'),
+    ('Najglebsze jezioro swiata to', 'Bajkal'), ('Najwieksze jezioro swiata to', 'Kaspijskie'),
+    ('Najwieksza planeta to', 'Jupiter'), ('Najmniejsza planeta to', 'Merkury'),
+    ('Najblizsza planeta Sloncu to', 'Merkury'), ('Najwolniejsza planeta to', 'Jowisz'),
+    ('Symbol chemiczny zlota to', 'Au'), ('Symbol chemiczny srebra to', 'Ag'),
+    ('Symbol chemiczny miedzi to', 'Cu'), ('Symbol chemiczny zelaza to', 'Fe'),
+    ('Lalka napisal', 'Prus'), ('Faraona napisal', 'Prus'),
+    ('Pana Tadeusza napisal', 'Mickiewicz'), ('Sonety krymskie napisal', 'Mickiewicz'),
+    ('Ksiazke Harry Potter napisala', 'Rowling'), ('Romeo i Juliecie napisal', 'Shakespeare'),
+    ('Najwyzszy szczyt Polski to', 'Rysy'), ('Najwyzszy szczyt Tatr to', 'Rysy'),
+    ('Najwyzszy szczyt gor Polski to', 'Rysy'),
 ]
 
 # warianty formatow: (szablon promptu, szablon odpowiedzi)
