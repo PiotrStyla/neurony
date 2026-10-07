@@ -89,13 +89,24 @@ HOLD_OUT = {
 
 
 def _norm(s):
-    # Paryz == Paryż: sędzia liczy trafienia niezależnie od diakrytyków i ogonków
+    # Paryz == Paryż == ParyÅ¼: tokenizer v6 ma w slowniku mojibake (utf-8 czytane
+    # jako latin-1), wiec skladamy: naprawa kodowania -> bez diakrytykow -> male litery
+    try:
+        s_fix = s.encode('latin-1', 'ignore').decode('utf-8', 'ignore') or s
+    except Exception:
+        s_fix = s
+    s = s_fix if len(s_fix) > 0 else s
     s = unicodedata.normalize('NFKD', s).encode('ascii', 'ignore').decode()
     return ''.join(c for c in s.lower() if c.isalnum())
 
 
 def _deacc(s):
     return unicodedata.normalize('NFKD', s).encode('ascii', 'ignore').decode()
+
+
+def _mojibake(s):
+    # odwrotnosc bledu: poprawny tekst -> forma zdegenerowana obecna w slowniku
+    return s.encode('utf-8', 'ignore').decode('latin-1', 'ignore')
 
 
 @torch.no_grad()
@@ -105,12 +116,13 @@ def evaluate(tag):
         ids = tok.encode(prompt).ids
         x = torch.tensor([ids], device=DEVICE)
         out = []
-        for _ in range(3):
+        for _ in range(4):
             logits = model(x)[0, -1].float()
             nxt = int(logits.argmax())
             out.append(tok.id_to_token(nxt))
             x = torch.cat([x, torch.tensor([[nxt]], device=DEVICE)], dim=1)
-        first_ids = {tok.encode(' ' + answer).ids[0], tok.encode(' ' + _deacc(answer)).ids[0]}
+        forms = {answer, _deacc(answer), _mojibake(answer)}
+        first_ids = {tok.encode(' ' + f).ids[0] for f in forms if f}
         last_logits = model(torch.tensor([ids], device=DEVICE))[0, -1].float()
         rank = min(int((last_logits > last_logits[f]).sum()) + 1 for f in first_ids)
         hit = _norm(answer) in _norm(''.join(out))
@@ -194,6 +206,17 @@ EXTRA_FACTS = [
     ('Ksiazke Harry Potter napisala', 'Rowling'), ('Romeo i Juliecie napisal', 'Shakespeare'),
     ('Najwyzszy szczyt Polski to', 'Rysy'), ('Najwyzszy szczyt Tatr to', 'Rysy'),
     ('Najwyzszy szczyt gor Polski to', 'Rysy'),
+    # v4: klasy liczb (ostatnia wczesniejsza klasa oporowa)
+    ('Rok odkrycia Ameryki przez Kolumba to', '1492'), ('Rok wynalezienia druku to', '1440'),
+    ('Rok konca I wojny swiatowej to', '1918'), ('Rok rozpoczecia II wojny to', '1939'),
+    ('Liczba kontynentow to', '7'), ('Liczba oceanow to', '5'),
+    ('Liczba stron swiata to', '4'), ('Liczba miesiecy w roku to', '12'),
+    ('Rok ma', '365'), ('Miesiac ma', '30'), ('Godzina ma', '60'), ('Minuta ma', '60'),
+    ('The year Columbus reached America was', '1492'),
+    ('World War I ended in', '1918'), ('World War II started in', '1939'),
+    ('The number of continents is', '7'), ('The number of oceans is', '5'),
+    ('A year has', '365'), ('A month has', '30'), ('An hour has', '60'),
+    ('The printing press was invented around', '1440'),
 ]
 
 # warianty formatow: (szablon promptu, szablon odpowiedzi)
